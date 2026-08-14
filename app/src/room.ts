@@ -109,6 +109,9 @@ export function resolveMeta(
 
 const META = resolveMeta(logic.meta);
 
+/** Real-time step: the room wakes every TICK_MS and advances the sim once. */
+const TICK_MS = 500;
+
 /**
  * Keepalive. Idle WebSockets get dropped by intermediaries after a few minutes;
  * the runtime answers these ping frames WITHOUT waking the room, so a quiet room
@@ -258,7 +261,7 @@ export class Room extends DurableObject<Env> {
         game.status = "playing";
       }
       await this.save(game, conns);
-      return this.broadcast(game, conns);
+      return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
     }
 
     const playerId = conns[connId];
@@ -278,7 +281,10 @@ export class Room extends DurableObject<Env> {
         game.result = end;
       }
       await this.save(game, conns);
-      return this.broadcast(game, conns);
+      return {
+        out: this.broadcast(game, conns),
+        wakeIn: game.status === "playing" ? TICK_MS : null,
+      };
     }
 
     // msg.type === "reset"
@@ -288,12 +294,27 @@ export class Room extends DurableObject<Env> {
     game.status = enough ? "playing" : "waiting";
     game.result = null;
     await this.save(game, conns);
-    return this.broadcast(game, conns);
+    return { out: this.broadcast(game, conns), wakeIn: enough ? TICK_MS : null };
   }
 
-  /** Turn-based games schedule no timers; override for real-time loops. */
+  /**
+   * Real-time loop: every TICK_MS, advance the simulation one step and fan out.
+   * Keeps ticking while playing; a finished game stops the alarm. Pause is a
+   * no-op in tick() but the loop stays alive so state keeps flowing.
+   */
   private async onWake(): Promise<Dispatchable> {
-    return [];
+    const { game, conns } = await this.load();
+    if (game.status !== "playing" || !game.state) return { wakeIn: null };
+
+    game.state = logic.tick(game.state);
+    const end = logic.isGameOver(game.state);
+    if (end.over) {
+      game.status = "over";
+      game.result = end;
+    }
+    await this.save(game, conns);
+    // A finished game stops the loop; a live one keeps ticking.
+    return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
   }
 
   // ── fan-out ────────────────────────────────────────────────────────────

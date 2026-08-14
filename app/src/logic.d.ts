@@ -25,6 +25,13 @@ export const meta: {
 export function setup(players: string[]): unknown;
 
 /**
+ * Real-time step: called by the room every TICK_MS to advance the simulation
+ * one fixed tick and return the new state. Must be pure and deterministic —
+ * the room replays these results after hibernation.
+ */
+export function tick(state: unknown): unknown;
+
+/**
  * May `playerId` play `action` against `state`? Called BEFORE any mutation, and
  * it is the only thing standing between an untrusted client and the state — be
  * strict here (whose turn it is, whether the move is in range, whether the cell
