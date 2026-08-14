@@ -245,6 +245,67 @@ describe("ranged & upkeep", () => {
   });
 });
 
+describe("battle verbs", () => {
+  function spawnEnemy(s: AnyState, id: number, x: number, y: number) {
+    const e = {
+      id,
+      f: "e",
+      t: "raider",
+      x,
+      y,
+      tx: null,
+      ty: null,
+      tgt: null,
+      hp: 14,
+      max: 14,
+      dmg: 0.5,
+      atkCd: 0,
+      moveCd: 0,
+      range: 1,
+    };
+    return { ...s, units: [...s.units, e] };
+  }
+
+  it("an attack order makes the squad hunt the target down", () => {
+    let s = build();
+    const bar = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: bar.x, y: bar.y });
+    s.res = { ...s.res, gold: 100, iron: 50 };
+    s = act(s, { type: "train", u: "knight" });
+    const knight = s.units.find((u: AnyState) => u.f === "p");
+    s = spawnEnemy(s, 5001, s.kx + 8, s.ky);
+    const enemy = s.units.find((u: AnyState) => u.id === 5001);
+    const d0 = Math.abs(knight.x - enemy.x) + Math.abs(knight.y - enemy.y);
+    const v = logic.validateAction(s, s.seat, { type: "attack", ids: [knight.id], target: 5001 });
+    expect(v.ok).toBe(true);
+    s = act(s, { type: "attack", ids: [knight.id], target: 5001 });
+    for (let i = 0; i < 400 && (enemy.hp || 14) > 5; i++) s = step(s);
+    const en = s.units.find((u: AnyState) => u.id === 5001);
+    const knightNow = s.units.find((u: AnyState) => u.id === knight.id);
+    const d1 = Math.abs(knightNow.x - (en ? en.x : s.kx + 8)) + Math.abs(knightNow.y - (en ? en.y : s.ky));
+    expect(d1).toBeLessThan(d0);
+    expect(en ? en.hp : 0).toBeLessThan(14);
+  });
+
+  it("hold clears move and hunt orders", () => {
+    let s = build();
+    const bar = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: bar.x, y: bar.y });
+    s = act(s, { type: "train", u: "spearman" });
+    const u = s.units.find((u: AnyState) => u.f === "p");
+    s = act(s, { type: "move", ids: [u.id], x: u.x + 4, y: u.y });
+    s = act(s, { type: "hold", ids: [u.id] });
+    const held = s.units.find((x: AnyState) => x.id === u.id);
+    expect(held.tx).toBeNull();
+  });
+
+  it("rejects attacking a friendly unit", () => {
+    const s = build();
+    const v = logic.validateAction(s, s.seat, { type: "attack", ids: [1], target: 2 });
+    expect(v.ok).toBe(false);
+  });
+});
+
 describe("pause", () => {
   it("freezes the sim while paused", () => {
     let s = build();

@@ -292,6 +292,28 @@ export function validateAction(state, playerId, action) {
       }
       return { ok: true };
     }
+    case "attack": {
+      if (!Array.isArray(action.ids) || !action.ids.length) return { ok: false, error: "no units" };
+      const target = Number.isInteger(action.target) ? action.target : null;
+      if (target == null) return { ok: false, error: "no target" };
+      const tgt = state.units.find((u) => u.id === target);
+      if (!tgt || tgt.f !== F_ENEMY || tgt.hp <= 0) return { ok: false, error: "target is not an enemy" };
+      for (const id of action.ids) {
+        if (!state.units.some((u) => u.f === F_PLAYER && u.id === id)) {
+          return { ok: false, error: "not your unit" };
+        }
+      }
+      return { ok: true };
+    }
+    case "hold": {
+      if (!Array.isArray(action.ids) || !action.ids.length) return { ok: false, error: "no units" };
+      for (const id of action.ids) {
+        if (!state.units.some((u) => u.f === F_PLAYER && u.id === id)) {
+          return { ok: false, error: "not your unit" };
+        }
+      }
+      return { ok: true };
+    }
     case "repair": {
       const b = state.buildings.find((bb) => bb.id === action.id);
       if (!b) return { ok: false, error: "no such building" };
@@ -373,6 +395,7 @@ export function applyAction(state, playerId, action) {
         y: state.ky,
         tx: null,
         ty: null,
+        tgt: null,
         hp: def.hp,
         max: def.hp,
         dmg: def.dmg,
@@ -395,7 +418,28 @@ export function applyAction(state, playerId, action) {
     case "move": {
       const units = state.units.map((u) => {
         if (u.f === F_PLAYER && action.ids.includes(u.id)) {
-          return { ...u, tx: action.x, ty: action.y };
+          // a march order overwrites any hunt target
+          return { ...u, tx: action.x, ty: action.y, tgt: null };
+        }
+        return u;
+      });
+      return { ...state, units };
+    }
+    case "attack": {
+      // hot-pursuit: the squad hunts this enemy until it dies or is held
+      const units = state.units.map((u) => {
+        if (u.f === F_PLAYER && action.ids.includes(u.id)) {
+          return { ...u, tgt: action.target, tx: null, ty: null };
+        }
+        return u;
+      });
+      return { ...state, units };
+    }
+    case "hold": {
+      // stand your ground: no march, no hunt
+      const units = state.units.map((u) => {
+        if (u.f === F_PLAYER && action.ids.includes(u.id)) {
+          return { ...u, tgt: null, tx: null, ty: null };
         }
         return u;
       });
@@ -541,6 +585,25 @@ function stepUnits(s) {
   for (const u of players) {
     u.moveCd -= 1;
     u.atkCd -= 1;
+
+    // hot-pursuit: hunt the assigned target across the field
+    if (u.tgt != null) {
+      const hunted = units.find((o) => o.id === u.tgt);
+      if (!hunted || hunted.hp <= 0) {
+        u.tgt = null; // quarry is gone
+      } else {
+        const d = manhattan(u.x, u.y, hunted.x, hunted.y);
+        if (d <= u.range && u.atkCd <= 0) {
+          hunted.hp -= u.dmg;
+          u.atkCd = UNITS[u.t].atkCd;
+          if (hunted.hp <= 0) s.kills = (s.kills || 0) + 1;
+        } else if (d > u.range && u.moveCd <= 0) {
+          const chased = stepToward(s, u, hunted.x, hunted.y, buildingAt);
+          if (chased) u.moveCd = UNITS[u.t].moveCd;
+        }
+        continue;
+      }
+    }
 
     // fight enemies in range first — never walk through a melee
     const foe = nearestInRange(u, enemies);
@@ -836,6 +899,7 @@ export function viewFor(state, playerId) {
       max: u.max,
       tx: u.tx,
       ty: u.ty,
+      tgt: u.tgt ?? null,
       range: u.range,
     })),
     wave: state.wave || 0,

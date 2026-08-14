@@ -878,6 +878,19 @@ function draw() {
   }
   ctx.setLineDash([]);
 
+  // hunt lines: chasers in red to their quarry
+  ctx.strokeStyle = "rgba(230,60,50,.85)";
+  ctx.lineWidth = 2.5;
+  for (const u of v.units) {
+    if (u.f !== "p" || u.tgt == null) continue;
+    const prey = v.units.find((o) => o.id === u.tgt);
+    if (!prey) continue;
+    ctx.beginPath();
+    ctx.moveTo(sx(u.x) + tSize / 2, sy(u.y) + tSize / 2);
+    ctx.lineTo(sx(prey.x) + tSize / 2, sy(prey.y) + tSize / 2);
+    ctx.stroke();
+  }
+
   // build ghost
   if (mode.startsWith("build:")) {
     const b = mode.slice(6);
@@ -1099,14 +1112,19 @@ function handleClick() {
     } else {
       selected = new Set([hit.id]);
     }
-  } else if (selected.size) {
+  } else {
+    // clicked a tile: enemy there = charge, empty = march
     const [tx, ty] = tileAt(mx, my);
-    if (v && tx >= 0 && ty >= 0 && tx < v.W && ty < v.H) {
+    const foe = v?.units?.find((u) => u.f === "e" && u.x === tx && u.y === ty && u.hp > 0);
+    if (foe && selected.size) {
+      send({ type: "action", action: { type: "attack", ids: [...selected], target: foe.id } });
+      sfx("charge");
+    } else if (selected.size && v && tx >= 0 && ty >= 0 && tx < v.W && ty < v.H) {
       send({ type: "action", action: { type: "move", ids: [...selected], x: tx, y: ty } });
       selected = new Set();
+    } else {
+      selected = new Set();
     }
-  } else {
-    selected = new Set();
   }
 }
 
@@ -1147,6 +1165,9 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "p" || e.key === "P") {
     if (v) send({ type: "action", action: { type: "pause", on: !v.paused } });
+  }
+  if (e.key === "x" || e.key === "X") {
+    if (selected.size) send({ type: "action", action: { type: "hold", ids: [...selected] } });
   }
 });
 
@@ -1203,6 +1224,12 @@ repairBtn.addEventListener("click", () => {
   const on = mode === "repair";
   mode = on ? "idle" : "repair";
   repairBtn.classList.toggle("active", !on);
+});
+
+// hold: selected units stand their ground
+$("t-hold").addEventListener("click", () => {
+  if (!selected.size) return;
+  send({ type: "action", action: { type: "hold", ids: [...selected] } });
 });
 
 $("btnPause").addEventListener("click", () => {
@@ -1349,7 +1376,11 @@ function sfx(kind) {
     node("sawtooth", 110, 0.2, 0.12); // two hits
     setTimeout(() => node("sawtooth", 110, 0.2, 0.12), 250);
   } else if (kind === "train") node("triangle", 520, 0.18, 0.1, 780);
-  else if (kind === "kill") {
+  else if (kind === "charge") {
+    // war cry: rising fifth
+    node("sawtooth", 180, 0.3, 0.1, 360);
+    setTimeout(() => node("sawtooth", 240, 0.3, 0.09, 480), 120);
+  } else if (kind === "kill") {
     noise(0.1, 0.22, 900); // steel on steel
     node("square", 320, 0.08, 0.06, 220);
   } else if (kind === "end") {
@@ -1373,7 +1404,7 @@ document.querySelectorAll(".tool[data-b]").forEach((el) => {
 // intro overlay
 showOverlay("IRON HOLDFAST", "");
 $("ovText").textContent =
-  "A real-time siege builder. Grow a medieval economy — houses, farms, mines — raise walls and towers, train a garrison, and destroy the enemy camp before its waves break your keep. Click a building in the belt to place it; click a soldier, then click a tile to march it.";
+  "A real-time siege builder. Grow a medieval economy — houses, farms, mines — raise walls and towers, train a garrison, and destroy the enemy camp before its waves break your keep. When battle is joined, take control: select a soldier (or box-drag a squad), click the ground to march, click an enemy to charge them, press X to hold position.";
 $("ovBtn").textContent = "Begin the hold";
 document.addEventListener("pointerdown", initAudio, { once: true });
 $("ovBtn").addEventListener("click", () => {
