@@ -68,8 +68,23 @@ let lastShownEventId = 0;
 let gameOverShown = false;
 let camInited = false;
 
+// ── presentation FX (purely client-side: numbers, sparks, smoke, sounds) ──
+const fx = []; // {kind,x,y,t,dur,size,text?}
+const fxSeed = Math.random; // only for cosmetic variation — never sent
+
+function fxAdd(kind, tileX, tileY, opts) {
+  fx.push({ kind, x: tileX, y: tileY, t: 0, dur: opts?.dur || 700, size: opts?.size || 1, text: opts?.text });
+  if (fx.length > 200) fx.splice(0, fx.length - 200);
+}
+
+/** fx routed from tick diffs — keeps the event stream clean. */
+function fxState(kind, tileX, tileY, opts) {
+  fxAdd(kind, tileX, tileY, opts);
+}
+
 function onState(msg) {
   if (msg.view && msg.view !== v) {
+    const old = v;
     prev = v;
     v = msg.view;
     lastStateMs = performance.now();
@@ -78,6 +93,7 @@ function onState(msg) {
       camY = v.ky;
       camInited = true;
     }
+    diffState(old);
     updateHud();
     showEvents(v);
     drawMinimap();
@@ -94,6 +110,60 @@ function onState(msg) {
 }
 
 let onOverShown = false;
+
+// compare two tick snapshots and turn every change into a visible+audible beat
+function diffState(old) {
+  if (!old || !v) return;
+
+  // buildings: damaged → dust + thud; gone → rubble burst + crumble
+  for (const nb of v.buildings) {
+    const ob = old.buildings.find((b) => b.b === nb.b && b.x === nb.x && b.y === nb.y);
+    if (!ob) continue;
+    const d = ob.hp - nb.hp;
+    if (d > 0) {
+      fxState("dust", nb.x, nb.y, { size: Math.min(1.6, 0.6 + d / 60) });
+      if (d >= 40) sfx("thud");
+    }
+  }
+  for (const ob of old.buildings) {
+    const still = v.buildings.some((b) => b.id === ob.id);
+    if (!still && ob.hp > 0) {
+      fxState("rubble", ob.x, ob.y, { dur: 1200, size: 1.4 });
+      sfx("crumble");
+    }
+  }
+
+  // units: loss = death burst; hp drop = hit spark + damage number (limited)
+  let sparks = 0;
+  for (const nu of v.units) {
+    const ou = old.units.find((u) => u.id === nu.id);
+    if (!ou) continue;
+    const d = ou.hp - nu.hp;
+    if (d > 0 && sparks < 6) {
+      fxState("spark", nu.x, nu.y, { size: 0.8 });
+      fxState("dmg", nu.x, nu.y, { dur: 800, size: 0.8, text: String(Math.min(99, Math.max(1, Math.round(d)))) });
+      sparks += 1;
+    }
+  }
+  for (const ou of old.units) {
+    const gone = !v.units.some((u) => u.id === ou.id);
+    if (gone && ou.hp <= 0) {
+      fxState("death", ou.x, ou.y, { dur: 900, size: 1 });
+      if (ou.f === "p") sfx("lost");
+      else sfx("kill");
+    }
+  }
+
+  // keep/camp hit hard
+  if (old.keep.hp - v.keep.hp > 5) {
+    fxState("fire", v.kx, v.ky, { dur: 1300, size: 1.6 });
+    sfx("keephit");
+  }
+  if (old.camp.hp - v.camp.hp > 5) {
+    fxState("fire", v.campX, v.campY, { dur: 1300, size: 1.6 });
+    sfx("keephit");
+  }
+}
 
 function onError(err) {
   toast(err || "server error", "danger");
@@ -712,6 +782,22 @@ function draw() {
     }
   }
 
+  // water shimmer — moving light sparkles on water tiles
+  const tNow = performance.now();
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (v.map[y * v.W + x] !== "w") continue;
+      const phase = tNow / 700 + x * 1.7 + y * 2.3;
+      const a = (Math.sin(phase) + 1) / 2;
+      ctx.fillStyle = `rgba(235,245,255,${0.05 + a * 0.14})`;
+      const gx = sx(x) + tSize * (0.25 + 0.5 * ((Math.sin(phase * 0.6 + 3) + 1) / 2));
+      const gy = sy(y) + tSize * 0.5;
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, tSize * 0.16, tSize * 0.05, 0, 0, 7);
+      ctx.fill();
+    }
+  }
+
   // buildings
   for (const b of v.buildings) {
     const px = sx(b.x) + tSize / 2;
@@ -737,15 +823,29 @@ function draw() {
   bar(kpx - tSize / 2, kpy - tSize * 0.85, tSize, 5, v.keep.hp / v.keep.max);
 
   // enemy camp
-  const cx = sx(v.campX) + tSize / 2;
-  const cy = sy(v.campY) + tSize / 2;
+  const cxp = sx(v.campX) + tSize / 2;
+  const cyp = sy(v.campY) + tSize / 2;
   ctx.save();
-  ctx.translate(cx, cy);
+  // warning pulse while a wave is mustering or on the march
+  const incoming = v.waveSpawnIn > 0 || (v.nextWaveIn < 30 && v.wave > 0);
+  if (incoming) {
+    const pulse = (Math.sin(performance.now() / 200) + 1) / 2; // 0..1
+    ctx.fillStyle = `rgba(200,60,40,${0.10 + pulse * 0.14})`;
+    ctx.beginPath();
+    ctx.arc(cxp, cyp, tSize * (2.4 + pulse * 0.8), 0, 7);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,140,90,${0.25 + pulse * 0.5})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(cxp, cyp, tSize * (1.7 + pulse * 0.5), 0, 7);
+    ctx.stroke();
+  }
+  ctx.translate(cxp, cyp);
   ctx.scale((tSize * 1.5) / 32, (tSize * 1.5) / 32);
   ctx.translate(-16, -16);
   drawCamp(ctx, 32);
   ctx.restore();
-  bar(cx - tSize / 2 - 4, cy - tSize * 0.8, tSize + 8, 5, v.camp.hp / v.camp.max);
+  bar(cxp - tSize / 2 - 4, cyp - tSize * 0.8, tSize + 8, 5, v.camp.hp / v.camp.max);
 
   // units (interpolated)
   const prevById = new Map((prev?.units || []).map((u) => [u.id, u]));
@@ -805,6 +905,75 @@ function draw() {
     ctx.fillStyle = "rgba(47,111,208,.12)";
     ctx.fillRect(dragStart.x, dragStart.y, dragCur.x - dragStart.x, dragCur.y - dragStart.y);
     ctx.strokeRect(dragStart.x, dragStart.y, dragCur.x - dragStart.x, dragCur.y - dragStart.y);
+  }
+
+  drawFx();
+}
+
+// client-side visual effects (advance + paint in one pass)
+function drawFx() {
+  const dt = performance.now();
+  const tSize = TILE * zoom;
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const e = fx[i];
+    e.t = (e.t || 0) + 16; // one rAF step ~16ms
+    if (e.t >= e.dur) {
+      fx.splice(i, 1);
+      continue;
+    }
+    const k = e.t / e.dur;
+    const px = sx(e.x) + tSize / 2;
+    const py = sy(e.y) + tSize / 2;
+    ctx.save();
+    if (e.kind === "spark") {
+      // quick cross flash
+      const s = tSize * 0.35 * e.size * (1 - k);
+      ctx.strokeStyle = `rgba(255,215,94,${0.9 * (1 - k)})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(px - s, py - s);
+      ctx.lineTo(px + s, py + s);
+      ctx.moveTo(px + s, py - s);
+      ctx.lineTo(px - s, py + s);
+      ctx.stroke();
+    } else if (e.kind === "dust" || e.kind === "rubble") {
+      // rising puffs
+      ctx.fillStyle = `rgba(140,120,90,${0.45 * (1 - k)})`;
+      for (let n = 0; n < 5; n++) {
+        const a = n * 2.1;
+        const rr = tSize * (0.1 + k * 0.4) * e.size;
+        ctx.beginPath();
+        ctx.arc(px + Math.cos(a) * rr * 0.4, py - k * tSize * 0.5 + Math.sin(a) * rr * 0.3, Math.max(1.5, 5 * (1 - k) * e.size), 0, 7);
+        ctx.fill();
+      }
+    } else if (e.kind === "death") {
+      // burst ring + scatter
+      ctx.strokeStyle = `rgba(200,60,40,${0.8 * (1 - k)})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(px, py, tSize * 0.5 * k * e.size, 0, 7);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(220,160,60,${0.7 * (1 - k)})`;
+      for (let n = 0; n < 6; n++) {
+        const a = n * 1.05;
+        ctx.beginPath();
+        ctx.arc(px + Math.cos(a) * tSize * 0.5 * k, py + Math.sin(a) * tSize * 0.5 * k - k * tSize * 0.4, 3.5 * (1 - k), 0, 7);
+        ctx.fill();
+      }
+    } else if (e.kind === "dmg") {
+      // floating damage number
+      ctx.font = `bold ${Math.max(11, tSize * 0.42)}px Georgia, serif`;
+      ctx.fillStyle = `rgba(255,90,60,${1 - k})`;
+      ctx.textAlign = "center";
+      ctx.fillText(e.text || "", px, py - k * tSize * 0.6);
+    } else if (e.kind === "fire") {
+      // keep/camp hit: flame tongue
+      ctx.fillStyle = `rgba(255,${120 + k * 80},40,${0.85 * (1 - k)})`;
+      ctx.beginPath();
+      ctx.ellipse(px, py - k * tSize * 0.25, tSize * 0.22 * (1 - k * 0.3) * e.size, tSize * 0.32 * (1 - k) * e.size, 0, 0, 7);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 }
 
@@ -874,7 +1043,7 @@ window.addEventListener("mouseup", (e) => {
     panLast = null;
   }
   if (dragStart) {
-    if (dragMoved && dragCur) {
+    if (dragMoved && dragCur && !mode.startsWith("build:") && mode !== "repair") {
       // box select players inside the rect
       const x0 = Math.min(dragStart.x, dragCur.x);
       const y0 = Math.min(dragStart.y, dragCur.y);
@@ -889,7 +1058,7 @@ window.addEventListener("mouseup", (e) => {
       }
       selected = next;
     } else if (e.button === 0) {
-      handleClick(e);
+      handleClick();
     }
     dragStart = null;
     dragCur = null;
@@ -897,9 +1066,9 @@ window.addEventListener("mouseup", (e) => {
   }
 });
 
-function handleClick(e) {
-  const mx = e.offsetX;
-  const my = e.offsetY;
+function handleClick() {
+  const mx = mouse.x;
+  const my = mouse.y;
   if (mode.startsWith("build:")) {
     const b = mode.slice(6);
     const [tx, ty] = tileAt(mx, my);
@@ -1045,6 +1214,7 @@ $("btnReset").addEventListener("click", () => send({ type: "reset" }));
 
 $("btnMute").addEventListener("click", () => {
   muted = !muted;
+  localStorage.setItem("ironhold:muted", muted ? "1" : "0");
   if (!muted) initAudio();
   updateHud();
 });
@@ -1063,7 +1233,7 @@ $("ovBtn").addEventListener("click", () => {
 // ── audio (WebAudio synthesis) ─────────────────────────────────────────────
 
 let ac = null;
-let muted = false;
+let muted = localStorage.getItem("ironhold:muted") === "1";
 let musicGain = null;
 let musicTimer = null;
 
@@ -1146,14 +1316,43 @@ function sfx(kind) {
     o.start(t);
     o.stop(t + dur + 0.05);
   };
+  // filtered noise burst (hits, impacts, sword clashes)
+  const noise = (dur, vol, lp) => {
+    const len = Math.max(1, Math.floor(ac.sampleRate * dur));
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const f = ac.createBiquadFilter();
+    f.type = "bandpass";
+    f.frequency.value = lp || 900;
+    f.Q.value = 0.8;
+    const g = ac.createGain();
+    env(g, dur, vol);
+    src.connect(f);
+    f.connect(g);
+    g.connect(ac.destination);
+    src.start(t);
+  };
   if (kind === "build") node("square", 130, 0.12, 0.12, 60);
-  else if (kind === "danger") {
+  else if (kind === "thud") noise(0.18, 0.2, 260); // blunt hammering on stone
+  else if (kind === "crumble") {
+    noise(0.6, 0.32, 150); // wall falls apart
+    node("sine", 70, 0.5, 0.12, 40);
+  } else if (kind === "lost") node("sawtooth", 220, 0.32, 0.08, 110); // your man falls
+  else if (kind === "keephit") {
+    node("sine", 90, 0.45, 0.3, 45);
+    noise(0.4, 0.28, 120);
+  } else if (kind === "danger") {
     node("sawtooth", 110, 0.2, 0.12);
     node("sawtooth", 110, 0.2, 0.12); // two hits
     setTimeout(() => node("sawtooth", 110, 0.2, 0.12), 250);
   } else if (kind === "train") node("triangle", 520, 0.18, 0.1, 780);
-  else if (kind === "kill") node("sine", 950, 0.08, 0.08, 500);
-  else if (kind === "end") {
+  else if (kind === "kill") {
+    noise(0.1, 0.22, 900); // steel on steel
+    node("square", 320, 0.08, 0.06, 220);
+  } else if (kind === "end") {
     node("triangle", 330, 0.9, 0.12);
     node("triangle", 415, 0.9, 0.1);
     node("triangle", 494, 1.2, 0.1);

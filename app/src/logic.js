@@ -250,9 +250,12 @@ export function validateAction(state, playerId, action) {
       }
       const tile = state.map[xy(x, y)];
       if (!PASSABLE[tile]) return { ok: false, error: "terrain blocks building here" };
-      if (state.buildings.some((b) => b.x === x && b.y === y)) {
+      if (state.buildings.some((b) => b.hp > 0 && b.x === x && b.y === y)) {
         return { ok: false, error: "tile occupied" };
       }
+      // the keep and the camp tiles must stay clear — enemies can only reach
+      // the keep, and the camp is the only way to win
+      if (x === state.kx && y === state.ky) return { ok: false, error: "occupied" };
       if (x === state.campX && y === state.campY) return { ok: false, error: "occupied" };
       if (action.b === "ironmine" && !adjacentTerrain(state, x, y, IRON)) {
         return { ok: false, error: "iron mine must touch an iron vein" };
@@ -268,7 +271,7 @@ export function validateAction(state, playerId, action) {
     }
     case "train": {
       if (!UNITS[action.u]) return { ok: false, error: "unknown unit" };
-      if (!state.buildings.some((b) => b.b === "barracks")) {
+      if (!state.buildings.some((b) => b.b === "barracks" && b.hp > 0)) {
         return { ok: false, error: "need a barracks first" };
       }
       const cost = UNITS[action.u].cost;
@@ -626,11 +629,16 @@ function stepUnits(s) {
 
   // reap deaths
   const alive = units.filter((u) => u.hp > 0);
-  const died = units.length - alive.length;
-  if (died > 0) {
-    // destroy any buildings the camp crushed leave rubble; walls just lose hp
+  if (alive.length !== units.length) {
+    // a unit fell — nothing else to settle here
   }
-  return { ...s, units: alive };
+  // destroyed buildings release their tile: a dead wall cannot block building
+  const aliveBuildings = s.buildings.filter((b) => b.hp > 0);
+  if (aliveBuildings.length !== s.buildings.length) {
+    const lost = s.buildings.length - aliveBuildings.length;
+    s.fallenBuildings = (s.fallenBuildings || 0) + lost;
+  }
+  return { ...s, units: alive, buildings: aliveBuildings };
 }
 
 function manhattan(x1, y1, x2, y2) {
@@ -671,11 +679,16 @@ function closest(list, u) {
 }
 
 function adjacentBuilding(s, u, buildingAt) {
+  // prefer walls/towers, but ANY building blocks the march — bash it
+  let wall = null;
+  let any = null;
   for (const [dx, dy] of DIRS) {
     const b = buildingAt.get(u.x + dx + "," + (u.y + dy));
-    if (b && (b.b === "wall" || b.b === "tower")) return b;
+    if (!b) continue;
+    if (b.b === "wall" || b.b === "tower") wall = b;
+    if (!any) any = b;
   }
-  return null;
+  return wall || any;
 }
 
 function stepToward(s, u, tx, ty, buildingAt) {
