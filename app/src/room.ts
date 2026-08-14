@@ -317,6 +317,10 @@ export class Room extends DurableObject<Env> {
       return { out: [], wakeIn: null };
     }
 
+    // Manually paused: tick() is a no-op, so stop waking and stop fanning
+    // out identical state. The action that unpauses re-arms the alarm.
+    if ((game.state as any).paused) return { out: [], wakeIn: null };
+
     game.state = logic.tick(game.state);
     const end = logic.isGameOver(game.state);
     if (end.over) {

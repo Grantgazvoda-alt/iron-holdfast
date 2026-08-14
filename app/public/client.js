@@ -85,6 +85,14 @@ function fxState(kind, tileX, tileY, opts) {
 function onState(msg) {
   if (msg.view && msg.view !== v) {
     const old = v;
+    // a fresh run restarts event ids at 1 — reset the dedupe token
+    if (old && msg.view.time === 0 && old.time > 0) {
+      lastShownEventId = 0;
+      fx.length = 0;
+      selected = new Set();
+      onOverShown = false; // a new hold may end (and must show its verdict) again
+      $("overlay").classList.remove("show");
+    }
     prev = v;
     v = msg.view;
     lastStateMs = performance.now();
@@ -924,12 +932,15 @@ function draw() {
 }
 
 // client-side visual effects (advance + paint in one pass)
+let lastFxAt = 0;
 function drawFx() {
-  const dt = performance.now();
+  const now = performance.now();
+  const stepMs = lastFxAt ? Math.min(50, now - lastFxAt) : 16;
+  lastFxAt = now;
   const tSize = TILE * zoom;
   for (let i = fx.length - 1; i >= 0; i--) {
     const e = fx[i];
-    e.t = (e.t || 0) + 16; // one rAF step ~16ms
+    e.t = (e.t || 0) + stepMs; // advance by real elapsed time
     if (e.t >= e.dur) {
       fx.splice(i, 1);
       continue;
@@ -1242,7 +1253,13 @@ $("btnReset").addEventListener("click", () => send({ type: "reset" }));
 $("btnMute").addEventListener("click", () => {
   muted = !muted;
   localStorage.setItem("ironhold:muted", muted ? "1" : "0");
-  if (!muted) initAudio();
+  if (!muted) {
+    initAudio();
+    if (ac && musicGain) musicGain.gain.linearRampToValueAtTime(0.5, ac.currentTime + 0.4);
+  } else if (ac && musicGain) {
+    // silence the ambient drone too — not just the one-shot SFX
+    musicGain.gain.setValueAtTime(0, ac.currentTime);
+  }
   updateHud();
 });
 
@@ -1276,8 +1293,8 @@ function initAudio() {
     musicGain.gain.value = 0;
     musicGain.connect(ac.destination);
     startDrone();
-    // fade in
-    musicGain.gain.linearRampToValueAtTime(0.5, ac.currentTime + 2);
+    // fade in (skip if the player's stored preference is muted)
+    if (!muted) musicGain.gain.linearRampToValueAtTime(0.5, ac.currentTime + 2);
   } catch {
     /* no audio available */
   }

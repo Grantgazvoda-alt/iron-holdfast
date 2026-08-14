@@ -781,29 +781,32 @@ function stepToward(s, u, tx, ty, buildingAt) {
 function stepTowers(s) {
   const towers = s.buildings.filter((b) => b.b === "tower" && b.hp > 0);
   if (!towers.length) return s;
-  const enemies = s.units.filter((u) => u.f === F_ENEMY && u.hp > 0);
-  if (!enemies.length) return s;
+  // work on the same copies the loop mutates, so kills stay consistent
   const units = s.units.map((u) => ({ ...u }));
+  let enemies = units.filter((u) => u.f === F_ENEMY && u.hp > 0);
+  if (!enemies.length) return s;
+  let kills = 0;
   for (const tw of towers) {
     tw.cd = (tw.cd || 8) - 1;
     if (tw.cd > 0) continue;
     const target = closest(enemies, tw);
     if (target && Math.abs(target.x - tw.x) + Math.abs(target.y - tw.y) <= 6) {
       const u = units.find((u) => u.id === target.id);
-      if (u) {
+      if (u && u.hp > 0) {
         u.hp -= 1.2;
         tw.cd = 10;
         if (u.hp <= 0) {
-          s.kills = (s.kills || 0) + 1;
-          pushEvent(s, "kill", "A tower fells an enemy.");
-          s.units = units.filter((o) => o.hp > 0);
-        } else {
-          s.units = units;
+          kills += 1;
+          enemies = enemies.filter((o) => o.id !== u.id);
         }
       }
     }
   }
-  return s;
+  if (kills) {
+    s.kills = (s.kills || 0) + kills;
+    pushEvent(s, "kill", "A tower fells " + kills + (kills > 1 ? " enemies." : " enemy."));
+  }
+  return { ...s, units };
 }
 
 function stepWaves(s) {
@@ -906,6 +909,7 @@ export function viewFor(state, playerId) {
     waveSpawnIn: state.pendingWave ? state.pendingWave.length : 0,
     nextWaveIn: state.waveIn ?? 120,
     unpaid: Boolean(state.unpaid),
+    paused: Boolean(state.paused),
     events: state.events.slice(-10),
     over: state.over || false,
     result: state.result || null,
