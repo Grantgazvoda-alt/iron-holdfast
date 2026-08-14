@@ -175,12 +175,14 @@ const PRODUCTION = {
 };
 
 const UNITS = {
-  spearman: { name: "Spearman", cost: { gold: 8, iron: 2 }, hp: 30, dmg: 0.55, atkCd: 10, range: 1, moveCd: 5, siege: 0.4 },
-  knight: { name: "Knight", cost: { gold: 20, iron: 6 }, hp: 70, dmg: 1.2, atkCd: 12, range: 1, moveCd: 8, siege: 1.0 },
+  spearman: { name: "Spearman", cost: { gold: 8, iron: 2 }, hp: 30, dmg: 0.55, atkCd: 10, range: 1, moveCd: 5, siege: 0.4, upk: 1 },
+  archer: { name: "Archer", cost: { gold: 10, wood: 8 }, hp: 18, dmg: 0.5, atkCd: 14, range: 3, moveCd: 6, siege: 0.2, upk: 1 },
+  knight: { name: "Knight", cost: { gold: 20, iron: 6 }, hp: 70, dmg: 1.2, atkCd: 12, range: 1, moveCd: 8, siege: 1.0, upk: 2 },
 };
 
 const ENEMY_UNITS = {
   raider: { name: "Raider", hp: 14, dmg: 0.5, atkCd: 10, range: 1, moveCd: 5 },
+  skirmisher: { name: "Skirmisher", hp: 10, dmg: 0.35, atkCd: 16, range: 3, moveCd: 6 },
   brute: { name: "Brute", hp: 55, dmg: 1.4, atkCd: 12, range: 1, moveCd: 9 },
 };
 
@@ -287,6 +289,16 @@ export function validateAction(state, playerId, action) {
       }
       return { ok: true };
     }
+    case "repair": {
+      const b = state.buildings.find((bb) => bb.id === action.id);
+      if (!b) return { ok: false, error: "no such building" };
+      if (b.hp >= b.max) return { ok: false, error: "already intact" };
+      const cost = repairCost(b);
+      for (const r of Object.keys(cost)) {
+        if ((state.res[r] || 0) < cost[r]) return { ok: false, error: "not enough " + r };
+      }
+      return { ok: true };
+    }
     case "pause": {
       if (typeof action.on !== "boolean") return { ok: false, error: "bad pause" };
       return { ok: true };
@@ -294,6 +306,16 @@ export function validateAction(state, playerId, action) {
     default:
       return { ok: false, error: "unknown action" };
   }
+}
+
+function repairCost(b) {
+  const base = BUILDINGS[b.b].cost;
+  const missing = 1 - b.hp / b.max;
+  const cost = {};
+  if (base.wood) cost.wood = Math.max(1, Math.ceil(base.wood * missing));
+  if (base.stone) cost.stone = Math.max(1, Math.ceil(base.stone * missing));
+  if (!base.wood && !base.stone) cost.wood = Math.max(1, Math.ceil(4 * missing));
+  return cost;
 }
 
 function adjacentTerrain(s, x, y, t) {
@@ -355,6 +377,8 @@ export function applyAction(state, playerId, action) {
         moveCd: 0,
         range: def.range,
         siege: def.siege,
+        upk: def.upk || 0,
+        upkAcc: 0,
       };
       const s = {
         ...state,
@@ -373,6 +397,18 @@ export function applyAction(state, playerId, action) {
         return u;
       });
       return { ...state, units };
+    }
+    case "repair": {
+      const b = state.buildings.find((bb) => bb.id === action.id);
+      const cost = repairCost(b);
+      const res = { ...state.res };
+      for (const r of Object.keys(cost)) res[r] -= cost[r];
+      const buildings = state.buildings.map((bb) =>
+        bb.id === action.id ? { ...bb, hp: bb.max, work: bb.work || 0 } : bb,
+      );
+      const s = { ...state, res, buildings };
+      pushEvent(s, "build", "Masons restore the " + BUILDINGS[b.b].name + ".");
+      return s;
     }
     case "pause": {
       return { ...state, paused: action.on };
@@ -396,6 +432,7 @@ export function tick(state) {
 
   s = stepEconomy(s);
   s = stepPop(s);
+  s = stepUpkeep(s);
   s = stepUnits(s);
   s = stepTowers(s);
   s = stepWaves(s);
@@ -466,6 +503,29 @@ function stepPop(s) {
   return { ...s, nextTickIn };
 }
 
+// soldiers eat gold: an unpaid garrison fights half-hearted
+function stepUpkeep(s) {
+  const paid = s.units.filter((u) => u.f === F_PLAYER && u.hp > 0);
+  const due = paid.reduce((n, u) => n + (u.upk || 0), 0);
+  if (due <= 0) return { ...s, unpaid: false };
+  const acc = (s.upkeepAcc || 0) + 1;
+  const PER = 900; // a pay day every 900 ticks (~7.5 min)
+  if (acc >= PER) {
+    const wasUnpaid = Boolean(s.unpaid);
+    let gold = s.res.gold;
+    const unpaid = gold < due;
+    gold = Math.max(0, gold - due);
+    const s2 = { ...s, res: { ...s.res, gold }, unpaid, upkeepAcc: 0 };
+    if (unpaid && !wasUnpaid) {
+      pushEvent(s2, "danger", "The treasury is empty — the garrison fights half-hearted!");
+    } else if (!unpaid && wasUnpaid) {
+      pushEvent(s2, "build", "The soldiers are paid once more.");
+    }
+    return s2;
+  }
+  return { ...s, upkeepAcc: acc };
+}
+
 // units: player moves + fights; enemies advance and attack
 function stepUnits(s) {
   const units = s.units.map((u) => ({ ...u }));
@@ -474,16 +534,18 @@ function stepUnits(s) {
   const buildingsALive = s.buildings.filter((b) => b.hp > 0);
   const buildingAt = new Map(buildingsALive.map((b) => [b.x + "," + b.y, b]));
 
-  // player units: move toward order, otherwise hold; attack any enemy adjacent
+  // players: move toward order, otherwise hold; attack any enemy in weapon range
   for (const u of players) {
     u.moveCd -= 1;
     u.atkCd -= 1;
 
-    // fight adjacent enemies first — never walk through a melee
-    const foe = adjacentUnit(u, enemies);
+    // fight enemies in range first — never walk through a melee
+    const foe = nearestInRange(u, enemies);
     if (foe) {
       if (u.atkCd <= 0) {
-        foe.hp -= u.dmg;
+        let dmg = u.dmg;
+        if (s.unpaid) dmg *= 0.5; // morale penalty
+        foe.hp -= dmg;
         u.atkCd = UNITS[u.t].atkCd;
         if (foe.hp <= 0) s.kills = (s.kills || 0) + 1;
       }
@@ -518,13 +580,13 @@ function stepUnits(s) {
     }
   }
 
-  // enemy units: march on the keep; attack whatever blocks them
+// enemies: march on the keep; attack units in range and walls in the way
   for (const u of enemies) {
     u.moveCd -= 1;
     u.atkCd -= 1;
 
-    // attack a player unit adjacent — never walk through a melee
-    const near = adjacentUnit(u, players);
+    // attack a player unit in range — never walk through a melee
+    const near = nearestInRange(u, players);
     if (near) {
       if (u.atkCd <= 0) {
         near.hp -= u.dmg;
@@ -575,12 +637,23 @@ function manhattan(x1, y1, x2, y2) {
   return Math.abs(x1 - x2) + Math.abs(y1 - y2);
 }
 
-function adjacentUnit(u, list) {
+/** Nearest living target within the unit's weapon range. */
+function nearestInRange(u, list) {
+  let best = null;
+  let bd = Infinity;
   for (const o of list) {
     if (o.hp <= 0) continue;
-    if (Math.abs(o.x - u.x) + Math.abs(o.y - u.y) <= 1) return o;
+    const d = Math.abs(o.x - u.x) + Math.abs(o.y - u.y);
+    if (d <= u.range && d < bd) {
+      bd = d;
+      best = o;
+    }
   }
-  return null;
+  return best;
+}
+
+function adjacentUnit(u, list) {
+  return nearestInRange({ range: 1, x: u.x, y: u.y }, list);
 }
 
 function closest(list, u) {
@@ -669,7 +742,7 @@ function stepWaves(s) {
     const brutes = s.wave >= 3 ? 1 + Math.floor((s.wave - 3) / 2) : 0;
     // queue the wave
     const queue = [];
-    for (let i = 0; i < size; i++) queue.push("raider");
+    for (let i = 0; i < size; i++) queue.push(s.wave >= 2 && i % 4 === 3 ? "skirmisher" : "raider");
     for (let i = 0; i < brutes; i++) queue.push("brute");
     s.pendingWave = [...queue];
     pushEvent(s, "danger", "The enemy camp musters a new host — wave " + s.wave + "!");
@@ -699,7 +772,7 @@ function stepWaves(s) {
         dmg: def.dmg,
         atkCd: 0,
         moveCd: 0,
-        range: 1,
+        range: def.range,
       });
     }
     s.nextId = s.nextId + spawned.length;
@@ -739,7 +812,7 @@ export function viewFor(state, playerId) {
     res: state.res,
     pop: state.pop,
     popCap: state.popCap,
-    buildings: state.buildings.map((b) => ({ b: b.b, x: b.x, y: b.y, hp: Math.round(b.hp), max: b.max })),
+    buildings: state.buildings.map((b) => ({ id: b.id, b: b.b, x: b.x, y: b.y, hp: Math.round(b.hp), max: b.max })),
     units: state.units.map((u) => ({
       id: u.id,
       f: u.f,
@@ -750,10 +823,12 @@ export function viewFor(state, playerId) {
       max: u.max,
       tx: u.tx,
       ty: u.ty,
+      range: u.range,
     })),
     wave: state.wave || 0,
     waveSpawnIn: state.pendingWave ? state.pendingWave.length : 0,
     nextWaveIn: state.waveIn ?? 120,
+    unpaid: Boolean(state.unpaid),
     events: state.events.slice(-10),
     over: state.over || false,
     result: state.result || null,

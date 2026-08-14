@@ -259,6 +259,9 @@ export class Room extends DurableObject<Env> {
       if (game.status === "waiting" && game.seats.length >= META.minPlayers) {
         game.state = logic.setup(game.seats);
         game.status = "playing";
+      } else if (game.status === "playing" && game.state && (game.state as any).paused) {
+        // the player is back — resume an auto-paused solo game
+        game.state = logic.applyAction(game.state, msg.playerId, { type: "pause", on: false });
       }
       await this.save(game, conns);
       return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
@@ -305,6 +308,14 @@ export class Room extends DurableObject<Env> {
   private async onWake(): Promise<Dispatchable> {
     const { game, conns } = await this.load();
     if (game.status !== "playing" || !game.state) return { wakeIn: null };
+
+    // Solo game with nobody watching: pause the sim so the keep cannot fall
+    // while the player is away. A join resumes it (see onMessage).
+    if (Object.keys(conns).length === 0) {
+      game.state = logic.applyAction(game.state, (game.state as any).seat, { type: "pause", on: true });
+      await this.save(game, conns);
+      return { out: [], wakeIn: null };
+    }
 
     game.state = logic.tick(game.state);
     const end = logic.isGameOver(game.state);

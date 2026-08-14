@@ -80,6 +80,7 @@ function onState(msg) {
     }
     updateHud();
     showEvents(v);
+    drawMinimap();
   }
   if (msg.status === "over" && msg.result && !onOverShown) {
     showOverlay(
@@ -137,6 +138,7 @@ const COSTS = {
 
 const UNIT_COSTS = {
   spearman: { gold: 8, iron: 2 },
+  archer: { gold: 10, wood: 8 },
   knight: { gold: 20, iron: 6 },
 };
 
@@ -165,12 +167,13 @@ function updateHud() {
     const ok = Object.entries(cost).every(([r, n]) => v.res[r] >= n);
     el.classList.toggle("broke", !ok);
   }
-  for (const [id, u] of [["t-spearman", "spearman"], ["t-knight", "knight"]]) {
+  for (const [id, u] of [["t-spearman", "spearman"], ["t-archer", "archer"], ["t-knight", "knight"]]) {
     const cost = UNIT_COSTS[u];
     const hasBarracks = v.buildings.some((b) => b.b === "barracks" && b.hp > 0);
     const ok = hasBarracks && Object.entries(cost).every(([r, n]) => v.res[r] >= n);
     $(id).classList.toggle("broke", !ok);
   }
+  $("unpaidTag").style.display = v.unpaid ? "block" : "none";
 }
 
 // ── canvas ─────────────────────────────────────────────────────────────────
@@ -571,7 +574,17 @@ function drawUnit(g, u, sel) {
   g.stroke();
   g.strokeStyle = "#3a3a3a";
   g.lineWidth = 2.5;
-  if (u.t === "spearman" || u.t === "raider") {
+  const ranged = u.range > 1;
+  if (ranged) {
+    // bow
+    g.beginPath();
+    g.arc(cx + 10, cy - 4, 7, -Math.PI / 2, Math.PI / 2);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(cx + 10, cy - 11);
+    g.lineTo(cx + 10, cy + 3);
+    g.stroke();
+  } else if (u.t === "spearman" || u.t === "raider") {
     g.beginPath();
     g.moveTo(cx + 6, cy + 1);
     g.lineTo(cx + 12, cy - 12);
@@ -598,6 +611,64 @@ function bar(x, y, w, h, pct) {
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = pct > 0.5 ? "#3fad3f" : pct > 0.25 ? "#d9a441" : "#c0392b";
   ctx.fillRect(x, y, w * Math.max(0, pct), h);
+}
+
+// ── minimap ────────────────────────────────────────────────────────────────
+
+const mm = $("mmCanvas");
+const mmCtx = mm.getContext("2d");
+const MM_W = 150;
+const MM_H = 100;
+let mmTerrain = null; // cached terrain layer, rebuilt when the map changes
+
+function drawMinimap() {
+  if (!v || !mm) return;
+  mm.width = MM_W;
+  mm.height = MM_H;
+  const sclX = MM_W / v.W;
+  const sclY = MM_H / v.H;
+  const key = v.map;
+  if (mmTerrain !== key) {
+    // terrain base, painted once per map
+    for (let y = 0; y < v.H; y++) {
+      for (let x = 0; x < v.W; x++) {
+        const c = v.map[y * v.W + x];
+        mmCtx.fillStyle = c === "w" ? "#3a6f8a" : c === "f" ? "#2e5b28" : c === "r" ? "#8a8278" : c === "i" ? "#4a4550" : c === "a" ? "#c9a23e" : "#6f9e4f";
+        mmCtx.fillRect(x * sclX, y * sclY, Math.ceil(sclX), Math.ceil(sclY));
+      }
+    }
+    mmTerrain = key;
+  }
+  // buildings (walls/towers matter)
+  for (const b of v.buildings) {
+    mmCtx.fillStyle = b.b === "wall" ? "#c9c2b0" : b.b === "tower" ? "#d9d2c0" : "#6b5a3e";
+    mmCtx.fillRect(b.x * sclX, b.y * sclY, Math.max(2, sclX), Math.max(2, sclY));
+  }
+  // units
+  for (const u of v.units) {
+    mmCtx.fillStyle = u.f === "p" ? "#2f6fd0" : "#c84b42";
+    mmCtx.fillRect(u.x * sclX, u.y * sclY, Math.max(2, sclX), Math.max(2, sclY));
+  }
+  // keep + camp markers
+  mmCtx.fillStyle = "#ffd75e";
+  mmCtx.beginPath();
+  mmCtx.arc(v.kx * sclX + sclX / 2, v.ky * sclY + sclY / 2, 3, 0, 7);
+  mmCtx.fill();
+  mmCtx.fillStyle = "#ff5a4a";
+  mmCtx.beginPath();
+  mmCtx.arc(v.campX * sclX + sclX / 2, v.campY * sclY + sclY / 2, 3, 0, 7);
+  mmCtx.fill();
+}
+
+if (mm) {
+  mm.addEventListener("click", (e) => {
+    if (!v) return;
+    const r = mm.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / r.width;
+    const fy = (e.clientY - r.top) / r.height;
+    camX = fx * v.W;
+    camY = fy * v.H;
+  });
 }
 
 // ── render loop ────────────────────────────────────────────────────────────
@@ -714,7 +785,7 @@ function draw() {
     if (tx >= 0 && ty >= 0 && tx < v.W && ty < v.H) {
       const gx = sx(tx);
       const gy = sy(ty);
-      ctx.fillStyle = canBuild(tx, ty, b) ? "rgba(110,200,110,.3)" : "rgba(220,80,70,.35)";
+      ctx.fillStyle = validBuild(tx, ty, b) ? "rgba(110,200,110,.3)" : "rgba(220,80,70,.35)";
       ctx.fillRect(gx, gy, tSize, tSize);
       ctx.save();
       ctx.translate(gx + tSize / 2, gy + tSize / 2);
@@ -725,6 +796,15 @@ function draw() {
       ctx.restore();
       ctx.globalAlpha = 1;
     }
+  }
+
+  // box selection overlay
+  if (dragMoved && dragStart && dragCur) {
+    ctx.strokeStyle = "rgba(47,111,208,.9)";
+    ctx.lineWidth = 1.5;
+    ctx.fillStyle = "rgba(47,111,208,.12)";
+    ctx.fillRect(dragStart.x, dragStart.y, dragCur.x - dragStart.x, dragCur.y - dragStart.y);
+    ctx.strokeRect(dragStart.x, dragStart.y, dragCur.x - dragStart.x, dragCur.y - dragStart.y);
   }
 }
 
@@ -753,14 +833,23 @@ function adjacentTo(c, x, y) {
 
 // ── input ──────────────────────────────────────────────────────────────────
 
+// left-drag = box select, right/middle-drag = pan, wheel = zoom
+let dragStart = null; // {x,y} in client px, for box selection
+let dragCur = null;
+let dragMoved = false;
+
 canvas.addEventListener("mousedown", (e) => {
   mouse.x = e.offsetX;
   mouse.y = e.offsetY;
-  if (e.button === 0 || e.button === 1) {
+  if (e.button === 0) {
+    dragStart = { x: e.offsetX, y: e.offsetY };
+    dragCur = { x: e.offsetX, y: e.offsetY };
+    dragMoved = false;
+  } else {
     panning = true;
     panLast = [e.clientX, e.clientY];
-    e.preventDefault();
   }
+  e.preventDefault();
 });
 
 canvas.addEventListener("mousemove", (e) => {
@@ -771,15 +860,44 @@ canvas.addEventListener("mousemove", (e) => {
     camY -= (e.clientY - panLast[1]) / (TILE * zoom);
     panLast = [e.clientX, e.clientY];
   }
+  if (dragStart && !panning) {
+    const dx = e.offsetX - dragStart.x;
+    const dy = e.offsetY - dragStart.y;
+    if (Math.abs(dx) + Math.abs(dy) > 5) dragMoved = true;
+    if (dragMoved) dragCur = { x: e.offsetX, y: e.offsetY };
+  }
 });
 
-window.addEventListener("mouseup", () => {
-  panning = false;
-  panLast = null;
+window.addEventListener("mouseup", (e) => {
+  if (panning) {
+    panning = false;
+    panLast = null;
+  }
+  if (dragStart) {
+    if (dragMoved && dragCur) {
+      // box select players inside the rect
+      const x0 = Math.min(dragStart.x, dragCur.x);
+      const y0 = Math.min(dragStart.y, dragCur.y);
+      const x1 = Math.max(dragStart.x, dragCur.x);
+      const y1 = Math.max(dragStart.y, dragCur.y);
+      const next = new Set();
+      for (const u of v?.units || []) {
+        if (u.f !== "p") continue;
+        const px = sx(u.x) + (TILE * zoom) / 2;
+        const py = sy(u.y) + (TILE * zoom) / 2;
+        if (px >= x0 && px <= x1 && py >= y0 && py <= y1) next.add(u.id);
+      }
+      selected = next;
+    } else if (e.button === 0) {
+      handleClick(e);
+    }
+    dragStart = null;
+    dragCur = null;
+    dragMoved = false;
+  }
 });
 
-canvas.addEventListener("click", (e) => {
-  if (e.button !== 0) return;
+function handleClick(e) {
   const mx = e.offsetX;
   const my = e.offsetY;
   if (mode.startsWith("build:")) {
@@ -789,6 +907,17 @@ canvas.addEventListener("click", (e) => {
       send({ type: "action", action: { type: "build", b, x: tx, y: ty } });
       mode = "idle";
       document.querySelectorAll(".tool[data-b]").forEach((x) => x.classList.remove("active"));
+    }
+    return;
+  }
+  if (mode === "repair") {
+    // click a damaged building to repair it
+    const [tx, ty] = tileAt(mx, my);
+    if (v) {
+      const b = v.buildings.find((bb) => bb.x === tx && bb.y === ty && bb.hp < bb.max);
+      if (b) {
+        send({ type: "action", action: { type: "repair", id: b.id } });
+      }
     }
     return;
   }
@@ -810,13 +939,15 @@ canvas.addEventListener("click", (e) => {
   } else {
     selected = new Set();
   }
-});
+}
 
 canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (mode.startsWith("build:")) mode = "idle";
+  else if (mode === "repair") mode = "idle";
   else selected = new Set();
   document.querySelectorAll(".tool[data-b]").forEach((x) => x.classList.remove("active"));
+  repairBtn.classList.remove("active");
 });
 
 canvas.addEventListener("wheel", (e) => {
@@ -826,9 +957,27 @@ canvas.addEventListener("wheel", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && mode.startsWith("build:")) {
-    mode = "idle";
+  if (e.key === "Escape") {
+    if (mode.startsWith("build:")) mode = "idle";
+    else if (mode === "repair") mode = "idle";
+    else selected = new Set();
     document.querySelectorAll(".tool[data-b]").forEach((x) => x.classList.remove("active"));
+    repairBtn.classList.remove("active");
+  }
+  if (e.key === "h" || e.key === "H") {
+    if (v) {
+      camX = v.kx;
+      camY = v.ky;
+    }
+  }
+  if (e.key === "c" || e.key === "C") {
+    if (v) {
+      camX = v.campX;
+      camY = v.campY;
+    }
+  }
+  if (e.key === "p" || e.key === "P") {
+    if (v) send({ type: "action", action: { type: "pause", on: !v.paused } });
   }
 });
 
@@ -867,6 +1016,7 @@ document.querySelectorAll(".tool[data-b]").forEach((el) => {
 
 for (const [id, u] of [
   ["t-spearman", "spearman"],
+  ["t-archer", "archer"],
   ["t-knight", "knight"],
 ]) {
   $(id).addEventListener("click", () => {
@@ -874,6 +1024,17 @@ for (const [id, u] of [
     sfx("train");
   });
 }
+
+// repair tool: pick it, then click a damaged building
+const repairBtn = $("t-repair");
+repairBtn.addEventListener("click", () => {
+  if (mode.startsWith("build:")) {
+    document.querySelectorAll(".tool[data-b]").forEach((x) => x.classList.remove("active"));
+  }
+  const on = mode === "repair";
+  mode = on ? "idle" : "repair";
+  repairBtn.classList.toggle("active", !on);
+});
 
 $("btnPause").addEventListener("click", () => {
   if (!v) return;

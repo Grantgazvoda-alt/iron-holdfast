@@ -188,6 +188,63 @@ describe("waves and combat", () => {
   });
 });
 
+describe("repair", () => {
+  it("restores a damaged wall for a cost", () => {
+    let s = build();
+    const spot = findGrass(s, s.kx + 2, s.ky);
+    s = act(s, { type: "build", b: "wall", x: spot.x, y: spot.y });
+    const wall = s.buildings.find((b: AnyState) => b.b === "wall");
+    wall.hp = 50;
+    const woodBefore = s.res.wood;
+    const v = logic.validateAction(s, s.seat, { type: "repair", id: wall.id });
+    expect(v.ok).toBe(true);
+    s = act(s, { type: "repair", id: wall.id });
+    const fixed = s.buildings.find((b: AnyState) => b.id === wall.id);
+    expect(fixed.hp).toBe(fixed.max);
+    expect(s.res.wood).toBeLessThan(woodBefore);
+  });
+
+  it("refuses repair of an intact building", () => {
+    let s = build();
+    const spot = findGrass(s, s.kx + 2, s.ky);
+    s = act(s, { type: "build", b: "house", x: spot.x, y: spot.y });
+    const house = s.buildings.find((b: AnyState) => b.b === "house");
+    const v = logic.validateAction(s, s.seat, { type: "repair", id: house.id });
+    expect(v.ok).toBe(false);
+  });
+});
+
+describe("ranged & upkeep", () => {
+  it("an archer hits enemies within range", () => {
+    let s = build();
+    const bar = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: bar.x, y: bar.y });
+    s = act(s, { type: "train", u: "archer" });
+    const archer = s.units.find((u: AnyState) => u.f === "p");
+    const e = { id: 9000, f: "e", t: "raider", x: archer.x + 2, y: archer.y, hp: 14, max: 14, dmg: 0, atkCd: 0, moveCd: 0, range: 1 };
+    s = { ...s, units: [...s.units, e] };
+    const before = e.hp;
+    for (let i = 0; i < 30; i++) s = step(s);
+    const after = s.units.find((u: AnyState) => u.id === 9000);
+    expect(after ? after.hp : 0).toBeLessThan(before);
+  });
+
+  it("gold upkeep drains the treasury and flags unpaid", () => {
+    let s = build();
+    const bar = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: bar.x, y: bar.y });
+    s.res = { ...s.res, gold: 25, iron: 50 }; // 20 for the knight, 5 left over
+    s = act(s, { type: "train", u: "knight" }); // upk 2
+    s.res = { ...s.res, gold: 1 }; // a payday of 2 gold is unaffordable
+    // quiet the waves so the knight survives the full window
+    s.waveIn = 1e9;
+    s.pendingWave = [];
+    for (let i = 0; i < 950; i++) s = step(s);
+    expect(s.res.gold).toBe(0);
+    expect(s.unpaid).toBe(true);
+  });
+});
+
 describe("pause", () => {
   it("freezes the sim while paused", () => {
     let s = build();

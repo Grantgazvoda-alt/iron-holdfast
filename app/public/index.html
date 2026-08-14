@@ -51,7 +51,10 @@
       /* canvas */
       #stage { position: relative; flex: 1 1 auto; overflow: hidden; }
       #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
-      #events { position: absolute; top: 12px; left: 12px; z-index: 4; display: flex; flex-direction: column; gap: 6px; pointer-events: none; max-width: 46vw; }
+      #hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(20,14,8,.85); color: var(--parchment); padding: 7px 14px; border-radius: 20px; font-size: 12px; border: 1px solid rgba(217,164,65,.5); pointer-events: none; }
+      #unpaidTag { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(120,20,10,.92); color: #ffe0d0; padding: 7px 16px; border-radius: 20px; font-size: 13px; border: 1px solid #ff8a6a; display: none; z-index: 4; }
+      #minimap { position: absolute; right: 14px; bottom: 14px; width: 150px; height: 100px; border: 2px solid #6b4f2a; border-radius: 8px; background: rgba(20,14,8,.75); z-index: 3; overflow: hidden; cursor: pointer; }
+      #minimap canvas { width: 100%; height: 100%; display: block; }
       .evt { background: rgba(20,14,8,.82); border-left: 3px solid var(--gold); color: var(--parchment); padding: 7px 11px; font-size: 13px; border-radius: 0 8px 8px 0; animation: evtIn .25s ease, evtOut .4s ease 6s forwards; }
       .evt.danger { border-left-color: var(--oxblood); color: #ffd9d4; }
       .evt.train { border-left-color: var(--azure); }
@@ -82,7 +85,6 @@
       .grpname { font-size: 10px; letter-spacing: 2px; color: #8d7b54; writing-mode: vertical-rl; transform: rotate(180deg); }
 
       /* hint + overlay */
-      #hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(20,14,8,.85); color: var(--parchment); padding: 7px 14px; border-radius: 20px; font-size: 12px; border: 1px solid rgba(217,164,65,.5); pointer-events: none; }
       #overlay { position: fixed; inset: 0; background: rgba(10,6,2,.82); display: none; align-items: center; justify-content: center; z-index: 20; }
       #overlay.show { display: flex; }
       #card { background: linear-gradient(#241a10, #14100a); border: 2px solid var(--gold); border-radius: 14px; padding: 30px 44px; text-align: center; color: var(--parchment); max-width: 520px; }
@@ -127,7 +129,9 @@
       <div id="stage">
         <canvas id="canvas"></canvas>
         <div id="events"></div>
-        <div id="hint">Click a building below to place it · right-click or Esc cancels</div>
+        <div id="unpaidTag">⚒ The treasury is empty — the garrison fights half-hearted</div>
+        <div id="minimap"><canvas id="mmCanvas"></canvas></div>
+        <div id="hint">Click a building below to place it · right-click or Esc cancels · drag the map to pan · H keep · C camp</div>
       </div>
       <div id="belt">
         <div class="group">
@@ -145,7 +149,9 @@
         <div class="group">
           <div class="grpname">GARRISON</div>
           <div class="tool unit" id="t-spearman" title="cheap frontline"><span class="ic">🛡️</span><span class="nm">Spearman</span><span class="ct">8g 2i</span></div>
+          <div class="tool unit" id="t-archer" title="ranged, weak in melee"><span class="ic">🏹</span><span class="nm">Archer</span><span class="ct">10g 8w</span></div>
           <div class="tool unit" id="t-knight" title="heavy infantry"><span class="ic">⚜️</span><span class="nm">Knight</span><span class="ct">20g 6i</span></div>
+          <div class="tool" id="t-repair" title="click, then click a damaged building"><span class="ic">🔨</span><span class="nm">Repair</span><span class="ct">wood+stone</span></div>
         </div>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
           <button id="btnPause" class="tool" style="margin:0">⏸ Pause</button>
