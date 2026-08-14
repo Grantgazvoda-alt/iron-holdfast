@@ -1,0 +1,13 @@
+[install]
+# Every package resolves through the Socket firewall, which inspects packages for
+# malware / hijacked maintainers / typosquats BEFORE they reach a machine. This is
+# the DEFAULT and only registry — never repoint it at a public registry to "get an
+# install working": if Socket blocks something, read the reason and escalate it,
+# because a block is a finding rather than a snag.
+# NOTE the trailing slash — without it bun drops the `/npm` path and requests
+# packages from the host root, which 404s.
+registry = "https://socket-firewall.higgsfield.xyz/npm/"
+
+# 24h supply-chain guard: skip package versions published less than a day ago,
+# which is when a hijacked-maintainer release is most likely to still be live.
+minimumReleaseAge = 86400
