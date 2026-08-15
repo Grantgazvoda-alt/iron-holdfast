@@ -175,16 +175,32 @@ const PRODUCTION = {
 };
 
 const UNITS = {
-  spearman: { name: "Spearman", cost: { gold: 8, iron: 2 }, hp: 30, dmg: 0.55, atkCd: 10, range: 1, moveCd: 5, siege: 0.4, upk: 1 },
-  archer: { name: "Archer", cost: { gold: 10, wood: 8 }, hp: 18, dmg: 0.5, atkCd: 14, range: 3, moveCd: 6, siege: 0.2, upk: 1 },
-  knight: { name: "Knight", cost: { gold: 20, iron: 6 }, hp: 70, dmg: 1.2, atkCd: 12, range: 1, moveCd: 8, siege: 1.0, upk: 2 },
+  spearman: { name: "Spearman", cost: { gold: 8, iron: 2 }, hp: 30, dmg: 0.55, atkCd: 10, range: 1, moveCd: 5, siege: 0.4, upk: 1, morale: 70, chargeMult: 1.8 },
+  archer: { name: "Archer", cost: { gold: 10, wood: 8 }, hp: 18, dmg: 0.5, atkCd: 14, range: 3, moveCd: 6, siege: 0.2, upk: 1, morale: 60, chargeMult: 1.4 },
+  knight: { name: "Knight", cost: { gold: 20, iron: 6 }, hp: 70, dmg: 1.2, atkCd: 12, range: 1, moveCd: 8, siege: 1.0, upk: 2, morale: 85, chargeMult: 2.4 },
 };
 
 const ENEMY_UNITS = {
-  raider: { name: "Raider", hp: 14, dmg: 0.5, atkCd: 10, range: 1, moveCd: 5 },
-  skirmisher: { name: "Skirmisher", hp: 10, dmg: 0.35, atkCd: 16, range: 3, moveCd: 6 },
-  brute: { name: "Brute", hp: 55, dmg: 1.4, atkCd: 12, range: 1, moveCd: 9 },
+  raider: { name: "Raider", hp: 14, dmg: 0.5, atkCd: 10, range: 1, moveCd: 5, morale: 65 },
+  skirmisher: { name: "Skirmisher", hp: 10, dmg: 0.35, atkCd: 16, range: 3, moveCd: 6, morale: 55 },
+  brute: { name: "Brute", hp: 55, dmg: 1.4, atkCd: 12, range: 1, moveCd: 9, morale: 90 },
 };
+
+// ── barracks tech tree ─────────────────────────────────────────────────────
+// Each tech lists its cost and what it changes. Damage/range buffs apply to
+// NEW recruits; hp/morale buffs grade the whole standing garrison immediately.
+const TECHS = [
+  {
+    id: "training",
+    name: "Drill Grounds",
+    desc: "+25% melee damage (new recruits)",
+    cost: { gold: 30, iron: 5 },
+    dmgMult: 1.25,
+  },
+  { id: "longbow", name: "Longbow Craft", desc: "archers +1 range, +25% dmg", cost: { gold: 35, wood: 20 }, rangeAdd: 1, dmgMult: 1.25 },
+  { id: "plate", name: "Plate Armour", desc: "+25 HP, +15 morale to garrison", cost: { gold: 50, iron: 20 }, hpAdd: 25, moraleAdd: 15 },
+  { id: "heraldry", name: "War Heraldry", desc: "+30 morale, +20% charge power", cost: { gold: 60, iron: 25 }, moraleAdd: 30, chargeMult: 1.2 },
+];
 
 const DIRS = [
   [-1, 0],
@@ -192,6 +208,22 @@ const DIRS = [
   [0, -1],
   [0, 1],
 ];
+
+/** Accumulated tech bonuses for a new recruit of type `t`. */
+function techMods(state, t) {
+  const m = { dmg: 1, range: 0, hp: 0, morale: 0, chargeMult: 1 };
+  for (const id of state.techs || []) {
+    const tech = TECHS.find((x) => x.id === id);
+    if (!tech) continue;
+    if (tech.dmgMult && t !== "archer") m.dmg *= tech.dmgMult;
+    if (tech.dmgMult && t === "archer") m.dmg *= tech.dmgMult;
+    if (tech.rangeAdd && t === "archer") m.range += tech.rangeAdd;
+    if (tech.hpAdd) m.hp += tech.hpAdd;
+    if (tech.moraleAdd) m.morale += tech.moraleAdd;
+    if (tech.chargeMult) m.chargeMult *= tech.chargeMult;
+  }
+  return m;
+}
 
 // ── setup ──────────────────────────────────────────────────────────────────
 
@@ -220,6 +252,7 @@ export function setup(players) {
     nextPopIn: 40,
     buildings: [],
     units: [],
+    techs: [],
     nextId: 1,
     events: [],
     over: null,
@@ -314,6 +347,19 @@ export function validateAction(state, playerId, action) {
       }
       return { ok: true };
     }
+    case "research": {
+      const tech = TECHS.find((t) => t.id === action.tech);
+      if (!tech) return { ok: false, error: "unknown tech" };
+      if (state.techs.includes(action.tech)) return { ok: false, error: "already researched" };
+      if (!state.buildings.some((b) => b.b === "barracks" && b.hp > 0)) {
+        return { ok: false, error: "need a barracks to research" };
+      }
+      const cost = tech.cost;
+      for (const r of Object.keys(cost)) {
+        if ((state.res[r] || 0) < cost[r]) return { ok: false, error: "not enough " + r };
+      }
+      return { ok: true };
+    }
     case "repair": {
       const b = state.buildings.find((bb) => bb.id === action.id);
       if (!b) return { ok: false, error: "no such building" };
@@ -387,6 +433,7 @@ export function applyAction(state, playerId, action) {
       const def = UNITS[action.u];
       const res = { ...state.res };
       for (const r of Object.keys(def.cost)) res[r] -= def.cost[r];
+      const mods = techMods(state, action.u);
       const u = {
         id: state.nextId,
         f: F_PLAYER,
@@ -396,15 +443,18 @@ export function applyAction(state, playerId, action) {
         tx: null,
         ty: null,
         tgt: null,
-        hp: def.hp,
-        max: def.hp,
-        dmg: def.dmg,
+        hp: def.hp + mods.hp,
+        max: def.hp + mods.hp,
+        dmg: def.dmg * mods.dmg,
         atkCd: 0,
         moveCd: 0,
-        range: def.range,
+        range: def.range + mods.range,
         siege: def.siege,
         upk: def.upk || 0,
         upkAcc: 0,
+        morale: Math.min(100, (def.morale || 70) + mods.morale),
+        maxMorale: Math.min(100, (def.morale || 70) + mods.morale),
+        chargeMult: (def.chargeMult || 1.5) * mods.chargeMult,
       };
       const s = {
         ...state,
@@ -418,32 +468,61 @@ export function applyAction(state, playerId, action) {
     case "move": {
       const units = state.units.map((u) => {
         if (u.f === F_PLAYER && action.ids.includes(u.id)) {
-          // a march order overwrites any hunt target
-          return { ...u, tx: action.x, ty: action.y, tgt: null };
+          // a march order overwrites any hunt target and drops the charge
+          return { ...u, tx: action.x, ty: action.y, tgt: null, charge: 0 };
         }
         return u;
       });
       return { ...state, units };
     }
     case "attack": {
-      // hot-pursuit: the squad hunts this enemy until it dies or is held
+      // hot-pursuit: the squad hunts this enemy until it dies or is held.
+      // The charge is armed now and lands on the first strike of contact.
       const units = state.units.map((u) => {
         if (u.f === F_PLAYER && action.ids.includes(u.id)) {
-          return { ...u, tgt: action.target, tx: null, ty: null };
+          return { ...u, tgt: action.target, tx: null, ty: null, charge: 1 };
         }
         return u;
       });
       return { ...state, units };
     }
     case "hold": {
-      // stand your ground: no march, no hunt
+      // stand your ground: no march, no hunt, no charge
       const units = state.units.map((u) => {
         if (u.f === F_PLAYER && action.ids.includes(u.id)) {
-          return { ...u, tgt: null, tx: null, ty: null };
+          return { ...u, tgt: null, tx: null, ty: null, charge: 0 };
         }
         return u;
       });
       return { ...state, units };
+    }
+    case "research": {
+      const tech = TECHS.find((t) => t.id === action.tech);
+      const res = { ...state.res };
+      for (const r of Object.keys(tech.cost)) res[r] -= tech.cost[r];
+      // hp/morale buffs apply to the standing garrison instantly
+      let units = state.units;
+      if (tech.hpAdd || tech.moraleAdd) {
+        units = state.units.map((u) => {
+          if (u.f !== F_PLAYER) return u;
+          const hpAdd = tech.hpAdd || 0;
+          const moraleAdd = tech.moraleAdd || 0;
+          return {
+            ...u,
+            hp: u.hp + hpAdd,
+            max: u.max + hpAdd,
+            morale: Math.min(100, (u.morale || 0) + moraleAdd),
+          };
+        });
+      }
+      const s = {
+        ...state,
+        res,
+        techs: [...state.techs, tech.id],
+        units,
+      };
+      pushEvent(s, "train", "Researched: " + tech.name + " — " + tech.desc);
+      return s;
     }
     case "repair": {
       const b = state.buildings.find((bb) => bb.id === action.id);
@@ -480,6 +559,7 @@ export function tick(state) {
   s = stepEconomy(s);
   s = stepPop(s);
   s = stepUpkeep(s);
+  s = stepMorale(s);
   s = stepUnits(s);
   s = stepTowers(s);
   s = stepWaves(s);
@@ -573,6 +653,53 @@ function stepUpkeep(s) {
   return { ...s, upkeepAcc: acc };
 }
 
+// morale: allies nearby steady the line; blood, wounds and being outnumbered
+// break it. A broken unit routs — it flees toward safety and cannot fight
+// until it has run clear and recovers.
+function stepMorale(s) {
+  const units = s.units.map((u) => ({ ...u }));
+  for (const u of units) {
+    if (u.hp <= 0) continue;
+    const maxM = u.maxMorale || u.morale || 70;
+    u.morale = u.morale == null ? maxM : u.morale;
+
+    if (u.rout) {
+      // routing: keep running; rally only when far from the fight
+      u.routT = (u.routT || 0) + 1;
+      const enemiesNear = units.some(
+        (o) => o.f !== u.f && o.hp > 0 && manhattan(o.x, o.y, u.x, u.y) <= 5,
+      );
+      if (!enemiesNear && u.routT > 45) {
+        u.rout = 0;
+        u.morale = Math.ceil(maxM * 0.6);
+        u.routT = 0;
+      }
+      continue;
+    }
+
+    // pressure: how much friend vs foe is within reach
+    let foe = 0;
+    let ally = 0;
+    for (const o of units) {
+      if (o.hp <= 0 || o.id === u.id) continue;
+      const d = manhattan(o.x, o.y, u.x, u.y);
+      if (d > 5) continue;
+      if (o.f === u.f) ally += 1;
+      else foe += 1;
+    }
+    let d = 0.06; // gentle baseline regen
+    if (u.hp < u.max * 0.35) d -= 0.5; // wounded
+    if (ally === 0 && foe > 0) d -= 0.35; // isolated in the fight
+    if (foe > ally + 1) d -= 0.25; // outnumbered
+    u.morale = Math.max(0, Math.min(maxM, u.morale + d));
+    if (u.morale <= 0) {
+      u.rout = 1;
+      u.routT = 0;
+    }
+  }
+  return { ...s, units };
+}
+
 // units: player moves + fights; enemies advance and attack
 function stepUnits(s) {
   const units = s.units.map((u) => ({ ...u }));
@@ -586,7 +713,16 @@ function stepUnits(s) {
     u.moveCd -= 1;
     u.atkCd -= 1;
 
-    // hot-pursuit: hunt the assigned target across the field
+    // broken morale: flee toward the keep at a dead run
+    if (u.rout) {
+      if (u.moveCd <= 0) {
+        const fled = stepToward(s, u, s.kx, s.ky, buildingAt);
+        if (fled) u.moveCd = 2; // routed units move fast
+      }
+      continue;
+    }
+
+// hot-pursuit: hunt the assigned target across the field
     if (u.tgt != null) {
       const hunted = units.find((o) => o.id === u.tgt);
       if (!hunted || hunted.hp <= 0) {
@@ -594,7 +730,13 @@ function stepUnits(s) {
       } else {
         const d = manhattan(u.x, u.y, hunted.x, hunted.y);
         if (d <= u.range && u.atkCd <= 0) {
-          hunted.hp -= u.dmg;
+          let dmg = u.dmg;
+          if (u.charge > 0) {
+            dmg *= u.chargeMult || 1.5; // impact of the charge
+            u.charge = 0;
+          }
+          hunted.hp -= dmg;
+          hunted.morale = Math.max(0, (hunted.morale || 60) - dmg * 3);
           u.atkCd = UNITS[u.t].atkCd;
           if (hunted.hp <= 0) s.kills = (s.kills || 0) + 1;
         } else if (d > u.range && u.moveCd <= 0) {
@@ -611,7 +753,12 @@ function stepUnits(s) {
       if (u.atkCd <= 0) {
         let dmg = u.dmg;
         if (s.unpaid) dmg *= 0.5; // morale penalty
+        if (u.charge > 0) {
+          dmg *= u.chargeMult || 1.5; // charge of the assault
+          u.charge = 0;
+        }
         foe.hp -= dmg;
+        foe.morale = Math.max(0, (foe.morale || 60) - dmg * 3);
         u.atkCd = UNITS[u.t].atkCd;
         if (foe.hp <= 0) s.kills = (s.kills || 0) + 1;
       }
@@ -651,11 +798,21 @@ function stepUnits(s) {
     u.moveCd -= 1;
     u.atkCd -= 1;
 
+    // broken morale: flee toward the camp at a dead run
+    if (u.rout) {
+      if (u.moveCd <= 0) {
+        const fled = stepToward(s, u, s.campX, s.campY, buildingAt);
+        if (fled) u.moveCd = 2;
+      }
+      continue;
+    }
+
     // attack a player unit in range — never walk through a melee
     const near = nearestInRange(u, players);
     if (near) {
       if (u.atkCd <= 0) {
         near.hp -= u.dmg;
+        near.morale = Math.max(0, (near.morale || 60) - u.dmg * 4); // wounds break the will
         u.atkCd = ENEMY_UNITS[u.t].atkCd;
         if (near.hp <= 0) s.lost = (s.lost || 0) + 1;
       }
@@ -794,6 +951,7 @@ function stepTowers(s) {
       const u = units.find((u) => u.id === target.id);
       if (u && u.hp > 0) {
         u.hp -= 1.2;
+        u.morale = Math.max(0, (u.morale || 60) - 4); // arrows shake the line
         tw.cd = 10;
         if (u.hp <= 0) {
           kills += 1;
@@ -846,12 +1004,16 @@ function stepWaves(s) {
         y: s.campY,
         tx: null,
         ty: null,
+        tgt: null,
         hp: def.hp,
         max: def.hp,
         dmg: def.dmg,
         atkCd: 0,
         moveCd: 0,
         range: def.range,
+        morale: def.morale || 65,
+        maxMorale: def.morale || 65,
+        chargeMult: 1,
       });
     }
     s.nextId = s.nextId + spawned.length;
@@ -904,7 +1066,12 @@ export function viewFor(state, playerId) {
       ty: u.ty,
       tgt: u.tgt ?? null,
       range: u.range,
+      morale: Math.round(u.morale ?? 100),
+      maxMorale: Math.round(u.maxMorale ?? 100),
+      rout: Boolean(u.rout),
+      charge: u.charge > 0,
     })),
+    techs: state.techs || [],
     wave: state.wave || 0,
     waveSpawnIn: state.pendingWave ? state.pendingWave.length : 0,
     nextWaveIn: state.waveIn ?? 120,

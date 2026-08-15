@@ -246,7 +246,7 @@ describe("ranged & upkeep", () => {
 });
 
 describe("battle verbs", () => {
-  function spawnEnemy(s: AnyState, id: number, x: number, y: number) {
+  function spawnEnemy(s: AnyState, id: number, x: number, y: number, morale = 100, dmg = 0) {
     const e = {
       id,
       f: "e",
@@ -256,35 +256,47 @@ describe("battle verbs", () => {
       tx: null,
       ty: null,
       tgt: null,
-      hp: 14,
-      max: 14,
-      dmg: 0.5,
+      hp: 40,
+      max: 40,
+      dmg,
       atkCd: 0,
       moveCd: 0,
       range: 1,
+      morale,
+      maxMorale: morale,
+      rout: 0,
+      routT: 0,
+      chargeMult: 1,
     };
     return { ...s, units: [...s.units, e] };
   }
-
-  it("an attack order makes the squad hunt the target down", () => {
+it("an attack order makes the squad hunt the target down", () => {
     let s = build();
     const bar = findGrass(s, s.kx, s.ky);
     s = act(s, { type: "build", b: "barracks", x: bar.x, y: bar.y });
     s.res = { ...s.res, gold: 100, iron: 50 };
     s = act(s, { type: "train", u: "knight" });
+    // silence the waves so a stray raid can't fog the pursuit result
+    s.waveIn = 1e9;
+    s.pendingWave = [];
     const knight = s.units.find((u: AnyState) => u.f === "p");
-    s = spawnEnemy(s, 5001, s.kx + 8, s.ky);
+    // harmless target some tiles away on the same row — isolates the pursuit
+    s = spawnEnemy(s, 5001, s.kx + 4, s.ky, 4000, 0);
     const enemy = s.units.find((u: AnyState) => u.id === 5001);
     const d0 = Math.abs(knight.x - enemy.x) + Math.abs(knight.y - enemy.y);
     const v = logic.validateAction(s, s.seat, { type: "attack", ids: [knight.id], target: 5001 });
     expect(v.ok).toBe(true);
     s = act(s, { type: "attack", ids: [knight.id], target: 5001 });
-    for (let i = 0; i < 400 && (enemy.hp || 14) > 5; i++) s = step(s);
-    const en = s.units.find((u: AnyState) => u.id === 5001);
+    for (let i = 0; i < 800; i++) s = step(s);
+    const after = s.units.find((u: AnyState) => u.id === 5001);
     const knightNow = s.units.find((u: AnyState) => u.id === knight.id);
-    const d1 = Math.abs(knightNow.x - (en ? en.x : s.kx + 8)) + Math.abs(knightNow.y - (en ? en.y : s.ky));
+    // the knight still stands (harmless target) and the raider took damage
+    expect(knightNow).toBeTruthy();
+    const d1 =
+      Math.abs(knightNow.x - (after ? after.x : s.kx + 4)) +
+      Math.abs(knightNow.y - (after ? after.y : s.ky));
     expect(d1).toBeLessThan(d0);
-    expect(en ? en.hp : 0).toBeLessThan(14);
+    expect(after ? after.hp : 0).toBeLessThan(14);
   });
 
   it("hold clears move and hunt orders", () => {
@@ -303,6 +315,121 @@ describe("battle verbs", () => {
     const s = build();
     const v = logic.validateAction(s, s.seat, { type: "attack", ids: [1], target: 2 });
     expect(v.ok).toBe(false);
+  });
+});
+
+describe("tech tree", () => {
+  it("requires a barracks and resources", () => {
+    const s = build();
+    const v1 = logic.validateAction(s, s.seat, { type: "research", tech: "training" });
+    expect(v1.ok).toBe(false); // no barracks
+    const place = findGrass(s, s.kx, s.ky);
+    let s2 = act(s, { type: "build", b: "barracks", x: place.x, y: place.y });
+    s2.res = { ...s2.res, gold: 0 };
+    const v2 = logic.validateAction(s2, s2.seat, { type: "research", tech: "training" });
+    expect(v2.ok).toBe(false); // broke
+    const v3 = logic.validateAction(s2, s2.seat, { type: "research", tech: "nope" });
+    expect(v3.ok).toBe(false); // unknown
+  });
+
+  it("researches a tech and applies damage to new recruits only", () => {
+    let s = build();
+    const place = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: place.x, y: place.y });
+    s.res = { ...s.res, gold: 100, iron: 100 };
+    s = act(s, { type: "train", u: "knight" });
+    const before = s.units.find((u: AnyState) => u.t === "knight");
+    const v = logic.validateAction(s, s.seat, { type: "research", tech: "training" });
+    expect(v.ok).toBe(true);
+    s = act(s, { type: "research", tech: "training" });
+    expect(s.techs).toContain("training");
+    // the veteran stands as he was; a new recruit carries the edge
+    const after = s.units.find((u: AnyState) => u.t === "knight" && u.id === before.id);
+    expect(after.dmg).toBe(before.dmg);
+    s = act(s, { type: "train", u: "knight" });
+    const fresh = s.units.find((u: AnyState) => u.t === "knight" && u.id !== before.id);
+    expect(fresh.dmg).toBeCloseTo(before.dmg * 1.25);
+  });
+
+  it("plate armour buffs the standing garrison instantly", () => {
+    let s = build();
+    const place = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: place.x, y: place.y });
+    s.res = { ...s.res, gold: 200, iron: 200 };
+    s = act(s, { type: "train", u: "spearman" });
+    const before = s.units.find((u: AnyState) => u.f === "p");
+    s = act(s, { type: "research", tech: "plate" });
+    const after = s.units.find((u: AnyState) => u.id === before.id);
+    expect(after.max).toBe(before.max + 25);
+    expect(after.morale).toBeGreaterThan(before.morale);
+  });
+
+  it("rejects researching the same tech twice", () => {
+    let s = build();
+    const place = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: place.x, y: place.y });
+    s.res = { ...s.res, gold: 200, iron: 200 };
+    s = act(s, { type: "research", tech: "training" });
+    const v = logic.validateAction(s, s.seat, { type: "research", tech: "training" });
+    expect(v.ok).toBe(false);
+  });
+});
+
+describe("morale & routing", () => {
+  function addEnemy(s: AnyState, id: number, x: number, y: number, hp = 14, morale = 100) {
+    const e = {
+      id, f: "e", t: "raider", x, y, tx: null, ty: null, tgt: null,
+      hp, max: hp, dmg: 0, atkCd: 0, moveCd: 0, range: 1,
+      morale, maxMorale: morale, rout: 0, routT: 0, chargeMult: 1,
+    };
+    return { ...s, units: [...s.units, e] };
+  }
+
+  it("a beaten enemy unit routs and flees toward the camp", () => {
+    let s = build();
+    const bar = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: bar.x, y: bar.y });
+    s.res = { ...s.res, gold: 100, iron: 50 };
+    s = act(s, { type: "train", u: "spearman" });
+    // enemy barely holding together, a hostile spearman within 5 tiles
+    const u = s.units.find((x: AnyState) => x.f === "p");
+    s = addEnemy(s, 9001, u.x + 2, u.y, 14, 1);
+    let routed = false;
+    for (let i = 0; i < 120; i++) {
+      s = step(s);
+      const e = s.units.find((x: AnyState) => x.id === 9001);
+      if (!e) break; // died before routing (spearman is adjacent and stronger)
+      if (e.rout) {
+        routed = true;
+        break;
+      }
+    }
+    expect(routed).toBe(true);
+  });
+
+  it("charge window multiplies the first strike after an attack order", () => {
+    let s = build();
+    const place = findGrass(s, s.kx, s.ky);
+    s = act(s, { type: "build", b: "barracks", x: place.x, y: place.y });
+    s.res = { ...s.res, gold: 100, iron: 50 };
+    s = act(s, { type: "train", u: "knight" });
+    s.waveIn = 1e9; // no stray raids while we measure the charge
+    s.pendingWave = [];
+    const knight = s.units.find((u: AnyState) => u.f === "p");
+    s = addEnemy(s, 9002, knight.x + 3, knight.y, 60, 100); // far enough to charge into
+    s = act(s, { type: "attack", ids: [knight.id], target: 9002 });
+    let sawBigHit = false;
+    let prev = 60;
+    const knightDmg = 1.2;
+    for (let i = 0; i < 300; i++) {
+      s = step(s);
+      const enemy = s.units.find((u: AnyState) => u.id === 9002);
+      if (!enemy) break;
+      const dealt = prev - enemy.hp;
+      if (dealt > knightDmg * 1.5 + 0.01) sawBigHit = true; // charge multiplier kicked in
+      prev = enemy.hp;
+    }
+    expect(sawBigHit).toBe(true);
   });
 });
 

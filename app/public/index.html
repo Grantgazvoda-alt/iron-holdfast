@@ -77,6 +77,10 @@
       .tool.active { border-color: var(--azure); background: rgba(47,111,208,.25); }
       .tool.unit { border-color: #3d6b3a; }
       .tool.unit:hover { border-color: #7ed06f; }
+      .tool.tech { border-color: #5a4a7a; }
+      .tool.tech:hover { border-color: #9a7ad0; }
+      .tool.done { border-color: #3fad3f; color: #c9f0c0; }
+      .tool.done .ct { color: #2ed05a; }
       .tool .ic { display: block; height: 22px; line-height: 22px; font-size: 17px; }
       .tool .nm { display: block; font-size: 11px; letter-spacing: .5px; }
       .tool .ct { display: block; font-size: 10px; color: #c9b67e; min-height: 13px; }
@@ -153,6 +157,13 @@
           <div class="tool unit" id="t-knight" title="heavy infantry"><span class="ic">⚜️</span><span class="nm">Knight</span><span class="ct">20g 6i</span></div>
           <div class="tool unit" id="t-hold" title="stand your ground (X)"><span class="ic">🧍</span><span class="nm">Hold</span><span class="ct">stop orders</span></div>
           <div class="tool" id="t-repair" title="click, then click a damaged building"><span class="ic">🔨</span><span class="nm">Repair</span><span class="ct">wood+stone</span></div>
+        </div>
+        <div class="group">
+          <div class="grpname">TECH</div>
+          <div class="tool tech" data-tech="training" title="+25% melee dmg (new recruits)"><span class="ic">🎖️</span><span class="nm">Drill</span><span class="ct">30g 5i</span></div>
+          <div class="tool tech" data-tech="longbow" title="archers +1 range, +25% dmg"><span class="ic">🏹</span><span class="nm">Longbow</span><span class="ct">35g 20w</span></div>
+          <div class="tool tech" data-tech="plate" title="+25 HP, +15 morale"><span class="ic">🛡️</span><span class="nm">Plate</span><span class="ct">50g 20i</span></div>
+          <div class="tool tech" data-tech="heraldry" title="+30 morale, +20% charge"><span class="ic">🚩</span><span class="nm">Heraldry</span><span class="ct">60g 25i</span></div>
         </div>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
           <button id="btnPause" class="tool" style="margin:0">⏸ Pause</button>

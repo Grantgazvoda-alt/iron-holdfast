@@ -252,6 +252,7 @@ function updateHud() {
     $(id).classList.toggle("broke", !ok);
   }
   $("unpaidTag").style.display = v.unpaid ? "block" : "none";
+  refreshTech();
 }
 
 // ── canvas ─────────────────────────────────────────────────────────────────
@@ -637,11 +638,14 @@ function drawUnit(g, u, sel) {
   const cy = 18;
   const col = u.f === "p" ? AZU : BLD;
   const dk = u.f === "p" ? "#1f4a8e" : "#6a1d1d";
+  // routed: ashen tint + a white banner
+  const tint = u.rout ? "#9a968c" : col;
+  const tintDk = u.rout ? "#6d6a60" : dk;
   g.beginPath();
   g.arc(cx, cy, 8, 0, 7);
-  g.fillStyle = col;
+  g.fillStyle = tint;
   g.fill();
-  g.strokeStyle = dk;
+  g.strokeStyle = tintDk;
   g.lineWidth = 2;
   g.stroke();
   g.fillStyle = "#d8d2c6";
@@ -679,6 +683,30 @@ function drawUnit(g, u, sel) {
     g.beginPath();
     g.arc(cx, cy - 1, 10, 0, 7);
     g.stroke();
+  }
+  // charge: golden arc around the unit while the window is open
+  if (u.charge) {
+    g.strokeStyle = "rgba(255,215,94,.9)";
+    g.lineWidth = 2;
+    g.beginPath();
+    g.arc(cx, cy - 1, 13, 0, 7);
+    g.stroke();
+  }
+  // routed: white flag above the head
+  if (u.rout) {
+    g.strokeStyle = "#e8e4da";
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(cx, cy - 12);
+    g.lineTo(cx, cy - 19);
+    g.stroke();
+    g.fillStyle = "#f2f0e8";
+    g.beginPath();
+    g.moveTo(cx, cy - 19);
+    g.lineTo(cx + 7, cy - 16.5);
+    g.lineTo(cx, cy - 14);
+    g.closePath();
+    g.fill();
   }
 }
 
@@ -870,6 +898,14 @@ function draw() {
     drawUnit(ctx, u, selected.has(u.id));
     ctx.restore();
     if (u.hp < u.max) bar(px - tSize * 0.28, py - tSize * 0.48, tSize * 0.56, 3.5, u.hp / u.max);
+    // morale strip: white bar below the unit, red when broken
+    if (u.morale != null && u.morale < u.maxMorale) {
+      const mw = tSize * 0.5;
+      ctx.fillStyle = "rgba(0,0,0,.55)";
+      ctx.fillRect(px - mw / 2 - 1, py + tSize * 0.34 - 1, mw + 2, 4.5);
+      ctx.fillStyle = u.rout ? "#c0392b" : u.morale > 50 ? "#e8d9b8" : "#d9a441";
+      ctx.fillRect(px - mw / 2, py + tSize * 0.34, mw * Math.max(0, u.morale / u.maxMorale), 2.5);
+    }
   }
 
   // move order flags for selected units
@@ -1236,6 +1272,33 @@ repairBtn.addEventListener("click", () => {
   mode = on ? "idle" : "repair";
   repairBtn.classList.toggle("active", !on);
 });
+
+// tech tree: click to research
+const TECH_COSTS = {
+  training: { gold: 30, iron: 5 },
+  longbow: { gold: 35, wood: 20 },
+  plate: { gold: 50, iron: 20 },
+  heraldry: { gold: 60, iron: 25 },
+};
+document.querySelectorAll(".tool[data-tech]").forEach((el) => {
+  el.addEventListener("click", () => {
+    if (!v) return;
+    const tech = el.dataset.tech;
+    send({ type: "action", action: { type: "research", tech } });
+    sfx("train");
+  });
+});
+function refreshTech() {
+  document.querySelectorAll(".tool[data-tech]").forEach((el) => {
+    const tech = el.dataset.tech;
+    if (!v) return;
+    const done = v.techs?.includes(tech);
+    el.classList.toggle("done", Boolean(done));
+    const cost = TECH_COSTS[tech] || {};
+    const ok = Object.entries(cost).every(([r, n]) => v.res[r] >= n);
+    el.classList.toggle("broke", !done && !ok);
+  });
+}
 
 // hold: selected units stand their ground
 $("t-hold").addEventListener("click", () => {
