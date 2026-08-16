@@ -1048,6 +1048,9 @@ function validBuild(x, y, b) {
   if (v.buildings.some((bb) => bb.x === x && bb.y === y)) return false;
   if (b === "ironmine" && !adjacentTo("i", x, y)) return false;
   if (b === "goldmine" && !adjacentTo("a", x, y)) return false;
+  // keep and camp tiles are protected — mirror the server rule
+  if (x === v.kx && y === v.ky) return false;
+  if (x === v.campX && y === v.campY) return false;
   return true;
 }
 function adjacentTo(c, x, y) {

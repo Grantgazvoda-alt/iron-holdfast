@@ -35,6 +35,12 @@ describe("fresh room state", () => {
 
   it("starts empty and waiting", () => {
     const g = freshGame();
-    expect(g).toEqual({ status: "waiting", seats: [], state: null, result: null });
+    expect(g).toEqual({
+      status: "waiting",
+      seats: [],
+      state: null,
+      result: null,
+      claims: {},
+    });
   });
 });

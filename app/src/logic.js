@@ -318,6 +318,9 @@ export function validateAction(state, playerId, action) {
       if (!Number.isInteger(action.x) || !Number.isInteger(action.y) || action.x < 0 || action.y < 0 || action.x >= W || action.y >= H) {
         return { ok: false, error: "out of bounds" };
       }
+      if (!PASSABLE[state.map[xy(action.x, action.y)]]) {
+        return { ok: false, error: "cannot march into that terrain" };
+      }
       for (const id of action.ids) {
         if (!state.units.some((u) => u.f === F_PLAYER && u.id === id)) {
           return { ok: false, error: "not your unit" };
@@ -434,12 +437,14 @@ export function applyAction(state, playerId, action) {
       const res = { ...state.res };
       for (const r of Object.keys(def.cost)) res[r] -= def.cost[r];
       const mods = techMods(state, action.u);
+      // spawn the recruit on the nearest free passable tile to the keep gate
+      const spawn = nearestSpawnTile(state, state.kx + 1, state.ky);
       const u = {
         id: state.nextId,
         f: F_PLAYER,
         t: action.u,
-        x: state.kx + 1,
-        y: state.ky,
+        x: spawn.x,
+        y: spawn.y,
         tx: null,
         ty: null,
         tgt: null,
@@ -455,6 +460,7 @@ export function applyAction(state, playerId, action) {
         morale: Math.min(100, (def.morale || 70) + mods.morale),
         maxMorale: Math.min(100, (def.morale || 70) + mods.morale),
         chargeMult: (def.chargeMult || 1.5) * mods.chargeMult,
+        assault: 0,
       };
       const s = {
         ...state,
@@ -468,8 +474,11 @@ export function applyAction(state, playerId, action) {
     case "move": {
       const units = state.units.map((u) => {
         if (u.f === F_PLAYER && action.ids.includes(u.id)) {
-          // a march order overwrites any hunt target and drops the charge
-          return { ...u, tx: action.x, ty: action.y, tgt: null, charge: 0 };
+          // march order: drops hunt + charge; keeps an assault intent when
+          // the destination is within striking range of the camp
+          const nearCamp =
+            Math.abs(action.x - state.campX) <= 1 && Math.abs(action.y - state.campY) <= 1;
+          return { ...u, tx: action.x, ty: action.y, tgt: null, charge: 0, assault: nearCamp ? 1 : 0 };
         }
         return u;
       });
@@ -480,17 +489,17 @@ export function applyAction(state, playerId, action) {
       // The charge is armed now and lands on the first strike of contact.
       const units = state.units.map((u) => {
         if (u.f === F_PLAYER && action.ids.includes(u.id)) {
-          return { ...u, tgt: action.target, tx: null, ty: null, charge: 1 };
+          return { ...u, tgt: action.target, tx: null, ty: null, charge: 1, assault: 0 };
         }
         return u;
       });
       return { ...state, units };
     }
     case "hold": {
-      // stand your ground: no march, no hunt, no charge
+      // stand your ground: no march, no hunt, no charge, no siege
       const units = state.units.map((u) => {
         if (u.f === F_PLAYER && action.ids.includes(u.id)) {
-          return { ...u, tgt: null, tx: null, ty: null, charge: 0 };
+          return { ...u, tgt: null, tx: null, ty: null, charge: 0, assault: 0 };
         }
         return u;
       });
@@ -780,14 +789,10 @@ function stepUnits(s) {
       }
     }
 
-    // assaulting the enemy camp? units ordered to its tile hammer it
+    // assaulting the enemy camp? units ordered to within striking distance of
+    // the camp keep hammering it even after the march order completes
     const campDist = Math.abs(u.x - s.campX) + Math.abs(u.y - s.campY);
-    const orderedCamp =
-      u.tx !== null &&
-      u.ty !== null &&
-      Math.abs(u.tx - s.campX) <= 1 &&
-      Math.abs(u.ty - s.campY) <= 1;
-    if (campDist <= 1 && orderedCamp && u.atkCd <= 0) {
+    if (campDist <= 1 && u.assault === 1 && u.atkCd <= 0) {
       s.camp = { ...s.camp, hp: Math.max(0, s.camp.hp - u.siege) };
       u.atkCd = UNITS[u.t].atkCd;
     }
@@ -859,6 +864,20 @@ function stepUnits(s) {
     s.fallenBuildings = (s.fallenBuildings || 0) + lost;
   }
   return { ...s, units: alive, buildings: aliveBuildings };
+}
+
+/** Nearest free passable tile (spiral search) from (fromX, fromY). */
+function nearestSpawnTile(s, fromX, fromY) {
+  for (let r = 0; r < 6; r++) {
+    for (let y = Math.max(1, fromY - r); y <= Math.min(H - 2, fromY + r); y++) {
+      for (let x = Math.max(1, fromX - r); x <= Math.min(W - 2, fromX + r); x++) {
+        if (PASSABLE[s.map[xy(x, y)]] && !s.buildings.some((b) => b.x === x && b.y === y && b.hp > 0)) {
+          return { x, y };
+        }
+      }
+    }
+  }
+  return { x: fromX, y: fromY };
 }
 
 function manhattan(x1, y1, x2, y2) {

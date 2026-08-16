@@ -47,6 +47,11 @@ interface Game {
   state: unknown;
   /** Whatever `logic.isGameOver()` returned once it ended. */
   result: unknown;
+  /**
+   * playerId -> connId of the connection that claimed that seat. Persisted so
+   * socket ownership survives hibernation; used to refuse seat hijacking.
+   */
+  claims?: Record<string, string>;
 }
 
 /** connId -> playerId. Persisted: the sockets outlive this object's memory. */
@@ -70,7 +75,7 @@ type Dispatchable = Out[] | { out?: Out[]; wakeIn?: number | null } | void;
  * `seats.push()` would leak into every other room that had not saved yet.
  */
 export function freshGame(): Game {
-  return { status: "waiting", seats: [], state: null, result: null };
+  return { status: "waiting", seats: [], state: null, result: null, claims: {} };
 }
 
 /**
@@ -217,7 +222,13 @@ export class Room extends DurableObject<Env> {
     if (!connId) return;
     const { game, conns } = await this.load();
     if (conns[connId] === undefined) return;
+    const seatedAs = conns[connId];
     delete conns[connId];
+    // Release the seat claim if this connection owned it — the slot frees up
+    // for a genuine reconnect, and a stale claim never blocks a fresh join.
+    if (game.claims && game.claims[seatedAs] === connId) {
+      delete game.claims[seatedAs];
+    }
     await this.save(game, conns);
     // Tell the remaining players the room got smaller.
     await this.dispatch(this.broadcast(game, conns));
@@ -250,11 +261,28 @@ export class Room extends DurableObject<Env> {
     const { game, conns } = await this.load();
 
     // A client introduces itself before it may act. Re-joining with the same
-    // playerId reclaims that seat (a reconnect after a dropped socket).
+    // playerId reclaims that seat — but ONLY when the previous owner's
+    // connection is gone (a genuine reconnect), never while that soul is
+    // still connected (which would let a second socket seize the solo seat).
     if (msg.type === "join") {
+      const already = game.seats.includes(msg.playerId);
+      if (already) {
+        const claims = game.claims ?? {};
+        const ownerConn = claims[msg.playerId];
+        if (ownerConn && conns[ownerConn]) {
+          // the current owner is still connected — this join is an impostor:
+          // seat it nowhere, treat it as a spectator
+          return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
+        }
+      }
       conns[connId] = msg.playerId;
-      if (!game.seats.includes(msg.playerId) && game.seats.length < META.maxPlayers) {
+      if (!game.claims) game.claims = {};
+      if (!already && game.seats.length < META.maxPlayers) {
         game.seats.push(msg.playerId);
+        game.claims[msg.playerId] = connId;
+      } else if (already) {
+        // legitimate reclaim: ownership transfers to the new connection
+        game.claims[msg.playerId] = connId;
       }
       if (game.status === "waiting" && game.seats.length >= META.minPlayers) {
         game.state = logic.setup(game.seats);
@@ -272,7 +300,8 @@ export class Room extends DurableObject<Env> {
 
     if (msg.type === "action") {
       if (game.status !== "playing") return this.error(connId, "game is not in progress");
-      if (!game.seats.includes(playerId)) return this.error(connId, "spectators cannot act");
+      const owned = game.seats.includes(playerId) && game.claims?.[playerId] === connId;
+      if (!owned) return this.error(connId, "spectators cannot act");
       // logic.js is the authority on whether an action is legal, and it is
       // consulted BEFORE any state is written.
       const verdict = logic.validateAction(game.state, playerId, msg.action);
@@ -291,7 +320,9 @@ export class Room extends DurableObject<Env> {
     }
 
     // msg.type === "reset"
-    if (!game.seats.includes(playerId)) return this.error(connId, "spectators cannot reset");
+    if (!(game.seats.includes(playerId) && game.claims?.[playerId] === connId)) {
+      return this.error(connId, "spectators cannot reset");
+    }
     const enough = game.seats.length >= META.minPlayers;
     game.state = enough ? logic.setup(game.seats) : null;
     game.status = enough ? "playing" : "waiting";
@@ -310,8 +341,9 @@ export class Room extends DurableObject<Env> {
     if (game.status !== "playing" || !game.state) return { wakeIn: null };
 
     // Solo game with nobody watching: pause the sim so the keep cannot fall
-    // while the player is away. A join resumes it (see onMessage).
-    if (Object.keys(conns).length === 0) {
+    // while the player is away. A join resumes it (see onMessage). A spectator
+    // alone does NOT keep the sim alive — only the seated player counts.
+    if (game.seats[0] && !Object.values(conns).includes(game.seats[0])) {
       game.state = logic.applyAction(game.state, (game.state as any).seat, { type: "pause", on: true });
       await this.save(game, conns);
       return { out: [], wakeIn: null };

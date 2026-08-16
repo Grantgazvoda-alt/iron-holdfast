@@ -164,16 +164,25 @@ describe("waves and combat", () => {
     let s = build();
     const bar = findGrass(s, s.kx, s.ky);
     s = act(s, { type: "build", b: "barracks", x: bar.x, y: bar.y });
-    s.res = { ...s.res, gold: 500, iron: 500 };
+    s.res = { ...s.res, gold: 1000, iron: 500 };
+    // silence waves — this test must measure the assault mechanic alone
+    s.waveIn = 1e9;
+    s.pendingWave = [];
     for (let i = 0; i < 8; i++) s = act(s, { type: "train", u: "knight" });
     const ids = s.units.filter((u: AnyState) => u.f === "p").map((u: AnyState) => u.id);
+    // order the army to the camp — the ASSAULT intent must persist after arrival
     s = act(s, { type: "move", ids, x: s.campX, y: s.campY });
+    const k = s.units.find((u: AnyState) => u.id === ids[0]);
+    expect(k.assault).toBe(1);
 
     let ended = false;
-    for (let i = 0; i < 8000 && !s.over; i++) s = step(s);
+    for (let i = 0; i < 20000 && !s.over; i++) s = step(s);
     if (s.over) ended = true;
+    // The camp is destroyable: a full knight army ordered on it must win —
+    // this is the game's only victory path and was previously broken.
     expect(ended).toBe(true);
-    expect(["victory", "defeat"]).toContain(s.result);
+    expect(s.result).toBe("victory");
+    expect(logic.isGameOver(s).over).toBe(true);
   });
 
   it("isGameOver flips after the keep falls", () => {
