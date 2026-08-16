@@ -1221,6 +1221,79 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ── touch: tap = click, drag = pan, pinch = zoom ───────────────────────────
+let touchPinch = null; // last two-pointer distance
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchPinch = Math.hypot(dx, dy);
+      return;
+    }
+    const t = e.touches[0];
+    touchPinch = null;
+    dragStart = { x: t.clientX, y: t.clientY };
+    dragCur = { x: t.clientX, y: t.clientY };
+    dragMoved = false;
+    panning = true;
+    panLast = [t.clientX, t.clientY];
+  },
+  { passive: false },
+);
+
+canvas.addEventListener(
+  "touchmove",
+  (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const d = Math.hypot(dx, dy);
+      if (touchPinch) {
+        zoom = clamp(zoom * (d / touchPinch), 0.5, 2.5);
+      }
+      touchPinch = d;
+      return;
+    }
+    const t = e.touches[0];
+    if (panning && panLast) {
+      camX -= (t.clientX - panLast[0]) / (TILE * zoom);
+      camY -= (t.clientY - panLast[1]) / (TILE * zoom);
+      panLast = [t.clientX, t.clientY];
+      const dxAbs = Math.abs(t.clientX - dragStart.x);
+      const dyAbs = Math.abs(t.clientY - dragStart.y);
+      if (dxAbs + dyAbs > 12) dragMoved = true;
+      dragCur = { x: t.clientX, y: t.clientY };
+    }
+  },
+  { passive: false },
+);
+
+canvas.addEventListener(
+  "touchend",
+  (e) => {
+    e.preventDefault();
+    panning = false;
+    panLast = null;
+    const t = e.changedTouches[0];
+    if (!dragMoved && t) {
+      // a tap: convert to a click at that point
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = t.clientX - rect.left;
+      mouse.y = t.clientY - rect.top;
+      handleClick();
+    }
+    dragStart = null;
+    dragCur = null;
+    dragMoved = false;
+    touchPinch = null;
+  },
+  { passive: false },
+);
+
 function unitAt(mx, my) {
   if (!v) return null;
   const tSize = TILE * zoom;
