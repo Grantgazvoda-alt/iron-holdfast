@@ -57,6 +57,28 @@
       #unpaidTag { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(120,20,10,.92); color: #ffe0d0; padding: 7px 16px; border-radius: 20px; font-size: 13px; border: 1px solid #ff8a6a; display: none; z-index: 4; }
       #minimap { position: absolute; right: 14px; bottom: 14px; width: 150px; height: 100px; border: 2px solid #6b4f2a; border-radius: 8px; background: rgba(20,14,8,.75); z-index: 3; overflow: hidden; cursor: pointer; }
       #minimap canvas { width: 100%; height: 100%; display: block; }
+      /* tutorial overlay */
+      #tutorial { position: fixed; inset: 0; background: rgba(8,5,2,.86); z-index: 40; display: none; align-items: center; justify-content: center; }
+      #tutorial.show { display: flex; }
+      #tCard { background: linear-gradient(#2a1f12, #17110a); border: 2px solid var(--gold); border-radius: 14px; padding: 26px 30px; max-width: 460px; width: calc(100% - 40px); color: var(--parchment); box-shadow: 0 0 60px rgba(0,0,0,.8); }
+      #tCard h2 { margin: 0 0 10px; color: var(--gold); font-size: 21px; letter-spacing: 1px; }
+      #tCard p { margin: 0 0 14px; font-size: 14.5px; line-height: 1.55; color: #e6d9b4; }
+      #tCard .keys { color: #c9b67e; font-size: 12.5px; margin-bottom: 16px; }
+      #tStep { display: block; font-size: 11px; letter-spacing: 2px; color: #8d7b54; margin-bottom: 10px; }
+      #tBtns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+      #tBtns button { font: 13px Georgia, serif; padding: 8px 16px; border-radius: 8px; cursor: pointer; border: 1px solid var(--gold); background: transparent; color: var(--parchment); }
+      #tBtns button.primary { background: var(--gold); color: #241a0c; border-color: var(--gold); }
+      #tBtns button:hover { filter: brightness(1.15); }
+      .t-highlight { outline: 3px solid #ffd75e !important; outline-offset: 3px; box-shadow: 0 0 18px rgba(255,215,94,.8); animation: tPulse 1s ease-in-out infinite; }
+      @keyframes tPulse { 0%,100% { outline-color: #ffd75e; } 50% { outline-color: #fff3c4; } }
+      @media (max-width: 700px) {
+        #hint { display: none; }
+        .tool { min-width: 60px; padding: 4px 5px 5px; }
+        .tool .nm { font-size: 9.5px; }
+        .tool .ct { font-size: 8.5px; }
+        #topbar { gap: 5px; }
+        #belt { gap: 6px; }
+      }
       .evt { background: rgba(20,14,8,.82); border-left: 3px solid var(--gold); color: var(--parchment); padding: 7px 11px; font-size: 13px; border-radius: 0 8px 8px 0; animation: evtIn .25s ease, evtOut .4s ease 6s forwards; }
       .evt.danger { border-left-color: var(--oxblood); color: #ffd9d4; }
       .evt.train { border-left-color: var(--azure); }
@@ -168,8 +190,22 @@
           <div class="tool tech" data-tech="heraldry" title="+30 morale, +20% charge"><span class="ic">🚩</span><span class="nm">Heraldry</span><span class="ct">60g 25i</span></div>
         </div>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+          <button id="btnTutorial" class="tool" style="margin:0" title="Show tutorial">❓</button>
           <button id="btnPause" class="tool" style="margin:0">⏸ Pause</button>
           <button id="btnMute" class="tool" style="margin:0">🔊</button>
+        </div>
+      </div>
+    </div>
+    <div id="tutorial" role="dialog" aria-label="Tutorial">
+      <div id="tCard">
+        <span id="tStep">TUTORIAL · 1 / 7</span>
+        <h2 id="tTitle">Welcome, Castellan</h2>
+        <p id="tText"></p>
+        <div class="keys" id="tKeys"></div>
+        <div id="tBtns">
+          <button id="tPrev" type="button">Back</button>
+          <button id="tSkip" type="button">Skip</button>
+          <button id="tNext" class="primary" type="button">Next</button>
         </div>
       </div>
     </div>

@@ -1101,6 +1101,15 @@ canvas.addEventListener("mousemove", (e) => {
 });
 
 window.addEventListener("mouseup", (e) => {
+  if (isRecentTouch()) {
+    // synthetic mouse events fired after a touch gesture — already handled
+    dragStart = null;
+    dragCur = null;
+    dragMoved = false;
+    panning = false;
+    panLast = null;
+    return;
+  }
   if (panning) {
     panning = false;
     panLast = null;
@@ -1223,6 +1232,8 @@ document.addEventListener("keydown", (e) => {
 
 // ── touch: tap = click, drag = pan, pinch = zoom ───────────────────────────
 let touchPinch = null; // last two-pointer distance
+let lastTouchEnd = 0; // suppresses the synthetic mouse events after a tap
+const isRecentTouch = () => performance.now() - lastTouchEnd < 350;
 canvas.addEventListener(
   "touchstart",
   (e) => {
@@ -1290,6 +1301,7 @@ canvas.addEventListener(
     dragCur = null;
     dragMoved = false;
     touchPinch = null;
+    lastTouchEnd = performance.now();
   },
   { passive: false },
 );
@@ -1376,6 +1388,108 @@ function refreshTech() {
   });
 }
 
+// ── tutorial overlay ───────────────────────────────────────────────────────
+const TUTORIAL = [
+  {
+    title: "Welcome, Castellan",
+    text: "You hold Iron Holdfast, the last keep in the valley. An enemy camp in the corner musters endless hosts — your only victory is to march on it and burn it down. Everything you build serves that war.",
+    keys: "Goal: destroy the enemy camp · Lose: the keep falls",
+    target: null,
+  },
+  {
+    title: "Build your economy",
+    text: "Select a building from the belt, then tap a green tile to place it. Houses raise your population cap; farms feed them; lumber camps feed the wood pile.",
+    keys: "Tap a building below, then tap the map",
+    target: '[data-b="house"]',
+  },
+  {
+    title: "Workers and food",
+    text: "Each farm, lumber camp and mine needs a worker from your population. Starving peasants stop the whole engine — keep food ahead of your people.",
+    keys: "Pop 6/6 → more houses raise the cap",
+    target: '[data-b="farm"]',
+  },
+  {
+    title: "Man the defences",
+    text: "Walls stop the raiders dead — they chew through stone. Towers shoot anything that walks past. Ring your keep while you still have time.",
+    keys: "Wall = 4 wood + 2 stone · Tower = 8w + 8s",
+    target: '[data-b="wall"]',
+  },
+  {
+    title: "Train a garrison",
+    text: "Barracks unlock your army. Spearmen hold the line cheaply, archers shoot over walls, knights smash on the charge. Click a unit, then click an enemy to charge them.",
+    keys: "Spearman 8g 2i · Archer 10g 8w · Knight 20g 6i",
+    target: '[data-b="barracks"]',
+  },
+  {
+    title: "Morale and the tech tree",
+    text: "Soldiers who watch friends die and take wounds may rout — a white flag means they are running. Gold keeps them paid, and the TECH group upgrades the whole army.",
+    keys: "Drill / Longbow / Plate / Heraldry in the TECH group",
+    target: '[data-tech="training"]',
+  },
+  {
+    title: "Hold, or burn the camp",
+    text: "Waves escalate forever. Build your army, march it to the enemy camp, and siege it down — that ends the war. Pause with P when you need to think.",
+    keys: "H = keep · C = camp · X = hold · P = pause · drag = pan · pinch = zoom",
+    target: null,
+  },
+];
+let tStep = 0;
+let tHighlight = null;
+function clearTutorialHighlight() {
+  if (tHighlight) {
+    tHighlight.classList.remove("t-highlight");
+    tHighlight = null;
+  }
+}
+function renderTutorial() {
+  const s = TUTORIAL[tStep];
+  $("tStep").textContent = `TUTORIAL · ${tStep + 1} / ${TUTORIAL.length}`;
+  $("tTitle").textContent = s.title;
+  $("tText").textContent = s.text;
+  $("tKeys").textContent = s.keys;
+  $("tPrev").style.visibility = tStep === 0 ? "hidden" : "visible";
+  $("tNext").textContent = tStep === TUTORIAL.length - 1 ? "Begin" : "Next";
+  clearTutorialHighlight();
+  if (s.target) {
+    const el = document.querySelector(s.target);
+    if (el) {
+      el.classList.add("t-highlight");
+      tHighlight = el;
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }
+}
+function showTutorial() {
+  tStep = 0;
+  renderTutorial();
+  $("tutorial").classList.add("show");
+  sfx("intro");
+}
+function closeTutorial() {
+  clearTutorialHighlight();
+  $("tutorial").classList.remove("show");
+}
+$("tNext").addEventListener("click", () => {
+  if (tStep < TUTORIAL.length - 1) {
+    tStep += 1;
+    renderTutorial();
+  } else {
+    closeTutorial();
+  }
+});
+$("tPrev").addEventListener("click", () => {
+  if (tStep > 0) {
+    tStep -= 1;
+    renderTutorial();
+  }
+});
+$("tSkip").addEventListener("click", closeTutorial);
+$("btnTutorial").addEventListener("click", showTutorial);
+
+// a delicate touch on every belt press — cost-free feedback
+document.querySelectorAll(".tool").forEach((el) => {
+  el.addEventListener("click", () => sfx("click"), { passive: true });
+});
 // hold: selected units stand their ground
 $("t-hold").addEventListener("click", () => {
   if (!selected.size) return;
@@ -1519,6 +1633,7 @@ function sfx(kind) {
     src.start(t);
   };
   if (kind === "build") node("square", 130, 0.12, 0.12, 60);
+  else if (kind === "click") node("triangle", 660, 0.06, 0.05, 520);
   else if (kind === "thud") noise(0.18, 0.2, 260); // blunt hammering on stone
   else if (kind === "crumble") {
     noise(0.6, 0.32, 150); // wall falls apart
@@ -1562,11 +1677,26 @@ showOverlay("IRON HOLDFAST", "");
 $("ovText").textContent =
   "A real-time siege builder. Grow a medieval economy — houses, farms, mines — raise walls and towers, train a garrison, and destroy the enemy camp before its waves break your keep. When battle is joined, take control: select a soldier (or box-drag a squad), click the ground to march, click an enemy to charge them, press X to hold position.";
 $("ovBtn").textContent = "Begin the hold";
-document.addEventListener("pointerdown", initAudio, { once: true });
+// first-time visitors get the guided tutorial as well
+let tutorialSeen = false;
+try {
+  tutorialSeen = localStorage.getItem("ironhold:tutorial") === "1";
+} catch {
+  /* storage blocked */
+}
 $("ovBtn").addEventListener("click", () => {
   initAudio();
   sfx("intro");
+  if (!tutorialSeen) {
+    try {
+      localStorage.setItem("ironhold:tutorial", "1");
+    } catch {
+      /* ignore */
+    }
+    showTutorial();
+  }
 });
+document.addEventListener("pointerdown", initAudio, { once: true });
 
 connect();
 requestAnimationFrame(loop);
