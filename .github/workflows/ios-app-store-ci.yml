@@ -19,6 +19,7 @@ concurrency:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   ios:
@@ -27,6 +28,21 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
+
+      - name: Publish validation start status
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -d "{\"state\":\"pending\",\"context\":\"ios-app-store/current-head\",\"description\":\"Run $GITHUB_RUN_ID started\",\"target_url\":\"$RUN_URL\"}"
 
       - name: Select Xcode 26.3
         run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
@@ -209,3 +225,24 @@ PY
           name: iron-holdfast-ios-store-assets
           path: mobile/store-assets
           if-no-files-found: error
+
+      - name: Publish validation result status
+        if: ${{ always() && github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          case "$JOB_STATUS" in
+            success) STATE='success' ;;
+            cancelled) STATE='error' ;;
+            *) STATE='failure' ;;
+          esac
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -d "{\"state\":\"$STATE\",\"context\":\"ios-app-store/current-head\",\"description\":\"Run $GITHUB_RUN_ID: $JOB_STATUS\",\"target_url\":\"$RUN_URL\"}" || true
