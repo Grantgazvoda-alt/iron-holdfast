@@ -17,17 +17,18 @@
   <p>This policy describes the current Iron Holdfast game release for web, iOS, and Android.</p>
 
   <h2>Information used by the game</h2>
-  <p>Iron Holdfast creates a random player identifier on your device and stores it locally so the server can maintain your place in a game room. The game sends that identifier, room information, gameplay commands, and game-state messages to the Iron Holdfast game server so multiplayer-style room state and the authoritative simulation can function.</p>
-  <p>Like most internet services, hosting and security infrastructure may process technical information such as IP address, connection timestamps, request information, and diagnostic logs to deliver the service, prevent abuse, and troubleshoot failures.</p>
+  <p>Iron Holdfast creates a random player identifier on your device and stores it locally so the server can maintain your place in a game room. The game sends that identifier, room information, gameplay commands, and game-state messages to the Iron Holdfast game server so room state and the authoritative simulation can function.</p>
+  <p>The current game server persists room state in per-room storage. That stored state can include the random player identifier, seat/connection ownership information, and game simulation state. The current server source does not define a fixed retention period for that persisted room state.</p>
+  <p>Hosting and security infrastructure may also process technical information such as IP address, connection timestamps, request information, and diagnostic logs to deliver the service, prevent abuse, and troubleshoot failures. A specific infrastructure-log retention period has not been established in this policy.</p>
 
   <h2>What the current release does not include</h2>
-  <p>The current release does not contain third-party advertising SDKs, behavioral advertising, an analytics SDK, a user-account profile system, or in-app purchase code. We do not sell personal information.</p>
+  <p>The current release does not contain third-party advertising SDKs, behavioral advertising, an analytics SDK, a user-account profile system, or in-app purchase code. The current application source contains no advertising or data-sale integration.</p>
 
   <h2>Local storage and game state</h2>
-  <p>The random player identifier and selected game preferences are stored on your device using browser/app local storage. Clearing the app's storage removes that local identifier. Server-side room state and operational logs may be retained as needed to operate, secure, and debug the service.</p>
+  <p>The random player identifier and selected game preferences are stored on your device using browser/app local storage. Clearing the app's storage removes that local copy. Clearing local app storage does not by itself establish deletion of room state already persisted by the game server.</p>
 
   <h2>Children</h2>
-  <p>Iron Holdfast is a medieval strategy and combat game and is not designed to collect personal information from children. The game does not provide chat, social profiles, or advertising in the current release.</p>
+  <p>Iron Holdfast is a medieval strategy and combat game. The current release does not provide chat, social profiles, or advertising.</p>
 
   <h2>Changes</h2>
   <p>If the game later adds accounts, analytics, advertising, purchases, or other data practices, this policy and the applicable app-store privacy disclosures should be updated before that release is published.</p>
