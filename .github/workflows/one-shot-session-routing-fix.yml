@@ -1,0 +1,62 @@
+name: One-shot session routing fix
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - scripts/apply-session-routing-fix.mjs
+      - .github/workflows/one-shot-session-routing-fix.yml
+      - public/session.js
+      - tests/session-certification.test.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'feature/mobile-store-release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/mobile-store-release
+          fetch-depth: 0
+      - name: Apply session routing fix once
+        shell: bash
+        run: |
+          if grep -q 'from "./session.js"' public/client.js && grep -q 'from "./session.js"' public/battle.js; then
+            echo 'Session routing fix is already present.'
+          else
+            node scripts/apply-session-routing-fix.mjs
+          fi
+      - name: Verify session navigation and release regressions
+        run: |
+          node --check public/session.js
+          node --check public/client.js
+          node --check public/battle.js
+          node --test \
+            tests/session-certification.test.mjs \
+            tests/release-certification.test.mjs \
+            tests/release-regressions.test.mjs \
+            tests/protocol-certification.mjs
+          node scripts/prepare-mobile.mjs
+          test -s mobile/www/session.js
+          grep -q 'from "./session.js"' mobile/www/client.js
+          grep -q 'from "./session.js"' mobile/www/battle.js
+          grep -q 'location.href = `/?room=${encodeURIComponent(room)}`' public/battle.js
+          ! grep -R -n -E 'get\(["'"']room["'"']\) *\|\| *["'"']main["'"']' public/client.js public/battle.js public/index.html
+      - name: Commit verified fix if needed
+        shell: bash
+        run: |
+          if git diff --quiet -- public/client.js public/battle.js public/index.html; then
+            echo 'No session routing change to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/client.js public/battle.js public/index.html
+          git diff --cached --check
+          git commit -m 'fix: isolate default solo rooms and wire battle return'
+          git push origin HEAD:feature/mobile-store-release
