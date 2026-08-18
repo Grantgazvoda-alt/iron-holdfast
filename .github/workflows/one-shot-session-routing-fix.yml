@@ -46,7 +46,11 @@ jobs:
           grep -q 'from "./session.js"' mobile/www/client.js
           grep -q 'from "./session.js"' mobile/www/battle.js
           grep -q 'location.href = `/?room=${encodeURIComponent(room)}`' public/battle.js
-          ! grep -R -n -E 'get\(["'"']room["'"']\) *\|\| *["'"']main["'"']' public/client.js public/battle.js public/index.html
+          if grep -Fq 'get("room") || "main"' public/client.js public/battle.js public/index.html || \
+             grep -Fq "get('room')||'main'" public/client.js public/battle.js public/index.html; then
+            echo 'Legacy global main-room fallback still exists.' >&2
+            exit 1
+          fi
       - name: Commit verified fix if needed
         shell: bash
         run: |
