@@ -47,8 +47,9 @@
       #campbar span { background: linear-gradient(#c84b42, #7a231e); }
       .barlbl { font-size: 9px; position: absolute; }
       #timebox { margin-left: auto; font-size: 12px; color: #c9b67e; }
-      #btnPause, #btnMute, #btnReset { cursor: pointer; border: 1px solid var(--gold); background: rgba(0,0,0,.35); color: var(--parchment); border-radius: 8px; padding: 6px 10px; font: 13px Georgia, serif; }
-      #btnPause:hover, #btnMute:hover, #btnReset:hover { background: var(--gold); color: #241a0c; }
+      #btnPause, #btnMute, #btnReset, #btnBattle { cursor: pointer; border: 1px solid var(--gold); background: rgba(0,0,0,.35); color: var(--parchment); border-radius: 8px; padding: 6px 10px; font: 13px Georgia, serif; text-decoration: none; white-space: nowrap; }
+      #btnPause:hover, #btnMute:hover, #btnReset:hover, #btnBattle:hover { background: var(--gold); color: #241a0c; }
+      #btnBattle { border-color: #d95f41; box-shadow: inset 0 0 0 1px rgba(217,95,65,.25); }
 
       /* canvas */
       #stage { position: relative; flex: 1 1 auto; overflow: hidden; }
@@ -152,6 +153,7 @@
           <div class="chip"><span class="lbl">Next</span><b id="resNext">—</b></div>
         </div>
         <div id="timebox"><span id="clock">0:00</span></div>
+        <a id="btnBattle" href="/battle.html" onclick="this.href='/battle.html?room='+encodeURIComponent(new URLSearchParams(location.search).get('room')||'main')">⚔ Enter Battle</a>
         <button id="btnReset">⟳ New run</button>
       </div>
       <div id="stage">
