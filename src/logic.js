@@ -800,6 +800,9 @@ function stepUnits(s) {
 
 // enemies: march on the keep; attack units in range and walls in the way
   for (const u of enemies) {
+    // Players act first in the tick. An enemy killed by that attack must not
+    // get a final ghost attack or movement before the reap phase below.
+    if (u.hp <= 0) continue;
     u.moveCd -= 1;
     u.atkCd -= 1;
 
@@ -933,24 +936,72 @@ function adjacentBuilding(s, u, buildingAt) {
 function stepToward(s, u, tx, ty, buildingAt) {
   const cx = u.x;
   const cy = u.y;
-  const cd = Math.abs(cx - tx) + Math.abs(cy - ty);
-  let best = null;
-  let bd = cd;
-  for (const [dx, dy] of DIRS) {
-    const nx = cx + dx;
-    const ny = cy + dy;
-    if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-    if (!PASSABLE[s.map[xy(nx, ny)]]) continue;
-    if (buildingAt.has(nx + "," + ny)) continue;
-    const d = Math.abs(nx - tx) + Math.abs(ny - ty);
-    if (d < bd) {
-      bd = d;
-      best = [nx, ny];
+  if (cx === tx && cy === ty) return false;
+  if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+
+  const start = xy(cx, cy);
+  const goal = xy(tx, ty);
+  if (!PASSABLE[s.map[goal]]) return false;
+
+  // Deterministic breadth-first search. The old mover only accepted a step
+  // that reduced Manhattan distance, which made units permanently stick on
+  // lakes and other obstacles whenever the shortest real route needed one
+  // sideways/backward detour. The map is only 40x26, so a bounded BFS is small
+  // and deterministic. Live buildings remain blockers.
+  const previous = new Int32Array(W * H);
+  previous.fill(-1);
+  const queue = new Int32Array(W * H);
+  let head = 0;
+  let tail = 0;
+  previous[start] = start;
+  queue[tail++] = start;
+
+  // If walls make the true goal unreachable, route toward the closest reachable
+  // frontier instead. That gets siege units adjacent to the blocking structure,
+  // where the existing combat code attacks the wall/tower rather than freezing.
+  let best = start;
+  let bestDistance = manhattan(cx, cy, tx, ty);
+  let foundGoal = false;
+
+  while (head < tail && !foundGoal) {
+    const current = queue[head++];
+    const x = current % W;
+    const y = Math.floor(current / W);
+    for (const [dx, dy] of DIRS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const next = xy(nx, ny);
+      if (previous[next] !== -1) continue;
+      if (!PASSABLE[s.map[next]]) continue;
+      if (buildingAt.has(nx + "," + ny)) continue;
+      previous[next] = current;
+      queue[tail++] = next;
+
+      const d = manhattan(nx, ny, tx, ty);
+      if (d < bestDistance) {
+        best = next;
+        bestDistance = d;
+      }
+      if (next === goal) {
+        best = goal;
+        foundGoal = true;
+        break;
+      }
     }
   }
-  if (!best) return false;
-  u.x = best[0];
-  u.y = best[1];
+
+  if (best === start) return false;
+
+  // Walk predecessors backward from the chosen reachable target until the first
+  // step after the current tile is found. Fixed DIRS order makes ties stable.
+  let next = best;
+  while (previous[next] !== start) {
+    next = previous[next];
+    if (next < 0 || previous[next] < 0) return false;
+  }
+  u.x = next % W;
+  u.y = Math.floor(next / W);
   return true;
 }
 
@@ -1038,6 +1089,9 @@ function stepWaves(s) {
     s.nextId = s.nextId + spawned.length;
     s.units = units;
     s.pendingWave = s.pendingWave.slice(n);
+    // An empty array is truthy. Leaving it in state would make !pendingWave
+    // false forever and permanently stop the director after wave one.
+    if (s.pendingWave.length === 0) s.pendingWave = null;
   }
   return s;
 }
