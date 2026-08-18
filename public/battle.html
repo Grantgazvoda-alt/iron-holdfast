@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+    <title>Iron Holdfast — Battle Mode</title>
+    <style>
+      :root { color-scheme: dark; --gold:#d9a441; --paper:#eadbb8; --danger:#b93631; }
+      * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+      html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#0e0e0e; font-family:Georgia,"Times New Roman",serif; touch-action:none; }
+      #battle { position:fixed; inset:0; width:100%; height:100%; display:block; background:#7f99ac; }
+      #hud { position:fixed; inset:0; pointer-events:none; color:#fff; text-shadow:0 2px 3px #000; }
+      #top { position:absolute; top:max(10px,env(safe-area-inset-top)); left:max(10px,env(safe-area-inset-left)); right:max(10px,env(safe-area-inset-right)); display:flex; gap:8px; align-items:center; }
+      .pill { background:rgba(10,8,5,.74); border:1px solid rgba(217,164,65,.65); border-radius:999px; padding:7px 11px; font-size:13px; }
+      #status { margin-left:auto; }
+      #return { pointer-events:auto; border:1px solid var(--gold); color:var(--paper); background:rgba(10,8,5,.86); border-radius:9px; padding:8px 11px; font:13px Georgia,serif; }
+      #crosshair { position:absolute; left:50%; top:50%; width:22px; height:22px; transform:translate(-50%,-50%); opacity:.9; }
+      #crosshair::before,#crosshair::after { content:""; position:absolute; background:#fff; box-shadow:0 0 3px #000; }
+      #crosshair::before { left:10px; top:2px; width:2px; height:18px; }
+      #crosshair::after { top:10px; left:2px; height:2px; width:18px; }
+      #message { position:absolute; left:50%; top:18%; transform:translateX(-50%); background:rgba(15,10,6,.78); border:1px solid rgba(217,164,65,.65); border-radius:10px; padding:9px 14px; max-width:min(90vw,560px); text-align:center; color:var(--paper); }
+      #message:empty { display:none; }
+      #desktopHelp { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); background:rgba(10,8,5,.66); border:1px solid rgba(217,164,65,.4); padding:7px 12px; border-radius:999px; font-size:12px; white-space:nowrap; }
+      #touch { display:none; position:absolute; inset:0; pointer-events:none; }
+      .stick { pointer-events:auto; position:absolute; bottom:max(22px,env(safe-area-inset-bottom)); width:132px; height:132px; border-radius:50%; border:2px solid rgba(255,255,255,.35); background:rgba(0,0,0,.22); touch-action:none; }
+      #moveStick { left:max(18px,env(safe-area-inset-left)); }
+      #lookPad { right:max(16px,env(safe-area-inset-right)); width:46vw; height:62vh; bottom:0; border-radius:0; border:0; background:transparent; }
+      .nub { position:absolute; left:50%; top:50%; width:46px; height:46px; margin:-23px; border-radius:50%; background:rgba(255,255,255,.28); border:2px solid rgba(255,255,255,.55); transform:translate(0,0); }
+      .action { pointer-events:auto; position:absolute; right:max(22px,env(safe-area-inset-right)); width:76px; height:76px; border-radius:50%; border:2px solid rgba(255,255,255,.55); color:#fff; font-weight:bold; background:rgba(130,30,25,.72); touch-action:none; }
+      #attack { bottom:max(26px,env(safe-area-inset-bottom)); }
+      #brace { bottom:max(116px,calc(env(safe-area-inset-bottom) + 110px)); background:rgba(35,65,105,.72); }
+      #sprint { bottom:max(206px,calc(env(safe-area-inset-bottom) + 200px)); width:62px; height:62px; right:max(30px,env(safe-area-inset-right)); background:rgba(75,75,55,.72); }
+      #orientation { display:none; position:fixed; inset:0; z-index:20; align-items:center; justify-content:center; text-align:center; padding:28px; background:#15100b; color:var(--paper); font-size:20px; }
+      @media (pointer:coarse), (max-width:900px) {
+        #touch { display:block; }
+        #desktopHelp { display:none; }
+      }
+      @media (orientation:portrait) and (pointer:coarse) {
+        #orientation { display:flex; }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="battle" aria-label="First-person battle view"></canvas>
+    <div id="hud">
+      <div id="top">
+        <div class="pill">IRON HOLDFAST · BATTLE</div>
+        <div class="pill" id="unit">No soldier</div>
+        <div class="pill" id="status">Connecting…</div>
+        <button id="return" type="button">Return to Command</button>
+      </div>
+      <div id="crosshair"></div>
+      <div id="message"></div>
+      <div id="desktopHelp">WASD move · mouse look · click attack · right-click brace · Shift sprint · Esc releases mouse</div>
+      <div id="touch">
+        <div class="stick" id="moveStick"><div class="nub" id="moveNub"></div></div>
+        <div id="lookPad"></div>
+        <button class="action" id="sprint">RUN</button>
+        <button class="action" id="brace">BRACE</button>
+        <button class="action" id="attack">ATTACK</button>
+      </div>
+    </div>
+    <div id="orientation">Rotate your device to landscape for Battle Mode.</div>
+    <script type="module" src="/battle.js"></script>
+  </body>
+</html>
