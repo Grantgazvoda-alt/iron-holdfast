@@ -12,6 +12,67 @@ permissions:
   contents: read
 
 jobs:
+  certify:
+    name: Release certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate game contract and JavaScript syntax
+        run: |
+          node --check scripts/check-logic.mjs
+          node scripts/check-logic.mjs
+          node --check scripts/prepare-mobile.mjs
+          node --check public/client.js
+          node --check public/battle.js
+      - name: Run dependency-free gameplay certification
+        run: node --test tests/release-certification.test.mjs
+      - name: Prepare and inspect mobile web package
+        env:
+          HF_MOBILE_SERVER: https://iron-empire.higgsfield.app
+        run: |
+          node scripts/prepare-mobile.mjs
+          test -s mobile/www/index.html
+          test -s mobile/www/battle.html
+          test -s mobile/www/client.js
+          test -s mobile/www/battle.js
+          test -s mobile/www/privacy.html
+          test -s mobile/www/support.html
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/client.js
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/battle.js
+          grep -q 'maximum-scale=1,user-scalable=no,viewport-fit=cover' mobile/www/index.html
+          grep -q 'maximum-scale=1,user-scalable=no,viewport-fit=cover' mobile/www/battle.html
+          grep -q 'apple-mobile-web-app-capable' mobile/www/index.html
+          grep -q 'Iron Holdfast Privacy Policy' mobile/www/privacy.html
+          grep -q 'Iron Holdfast Support' mobile/www/support.html
+      - name: Guard against committed signing secrets
+        shell: bash
+        run: |
+          if grep -R -n -E --exclude='*.md' --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' --exclude='*.webp' \
+            'BEGIN (RSA |EC |OPENSSH |)?PRIVATE KEY|BEGIN CERTIFICATE|APP_STORE_CONNECT_PRIVATE_KEY|MATCH_PASSWORD|APPLE_ID_PASSWORD|GOOGLE_SERVICE_ACCOUNT' \
+            mobile scripts public; then
+            echo 'Potential signing or service credential material found in release sources.' >&2
+            exit 1
+          fi
+
+  live-smoke:
+    name: Live game + store URL smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check live game
+        run: |
+          curl --fail --silent --show-error --location --max-time 20 https://iron-empire.higgsfield.app/ -o /tmp/game.html
+          grep -Eqi 'Iron Holdfast|IRON HOLDFAST' /tmp/game.html
+      - name: Check live privacy policy
+        run: |
+          curl --fail --silent --show-error --location --max-time 20 https://iron-empire.higgsfield.app/privacy.html -o /tmp/privacy.html
+          grep -qi 'Iron Holdfast Privacy Policy' /tmp/privacy.html
+      - name: Check live support page
+        run: |
+          curl --fail --silent --show-error --location --max-time 20 https://iron-empire.higgsfield.app/support.html -o /tmp/support.html
+          grep -qi 'Iron Holdfast Support' /tmp/support.html
+
   android:
     name: Android 16 / AAB
     runs-on: ubuntu-latest
