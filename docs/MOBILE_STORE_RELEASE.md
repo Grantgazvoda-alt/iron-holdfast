@@ -10,12 +10,14 @@ Status: release-prep branch. Store publication remains account/signing/review ga
 - Category: Games / Strategy. Consider Action as the secondary App Store category.
 - Version: `1.0.0`
 - Initial build/version code: `1`
-- Default provisional bundle/application id: `com.ironholdfast.game`
-- Override bundle/application id at native-project generation with `CAP_APP_ID` before the permanent store record is created.
+- Current provisional bundle/application id: `com.ironholdfast.game`
+- If the permanent store id changes, update both `mobile/android/app/build.gradle` and `mobile/ios/project.yml` before creating the permanent store records.
 - Production game backend: `https://iron-empire.higgsfield.app`
-- Privacy policy: `https://iron-empire.higgsfield.app/privacy.html`
-- Support URL: `https://iron-empire.higgsfield.app/support.html`
+- Planned privacy policy: `https://iron-empire.higgsfield.app/privacy.html`
+- Planned support URL: `https://iron-empire.higgsfield.app/support.html`
 - Marketing/game URL: `https://iron-empire.higgsfield.app/`
+
+The privacy and support pages exist on the release branch but are not considered live until a separately approved production deployment makes them available at those URLs.
 
 ## Store description draft
 
@@ -39,31 +41,66 @@ Internet access is required because the authoritative battle simulation is hoste
 
 ## Mobile packaging architecture
 
-The native package uses Capacitor 8.4.2. The game HTML/JavaScript is bundled into the iOS/Android app package. `scripts/prepare-mobile.mjs` rewrites only the mobile build output so WebSocket traffic connects to the production authoritative server instead of the native WebView's local origin.
+The store release intentionally does **not** depend on Capacitor or other new npm packages.
 
-The web deployment remains unchanged.
+`scripts/prepare-mobile.mjs` uses Node built-ins only. It copies the current game client from `public/` into generated `mobile/www/`, then rewrites only that generated native copy so WebSocket traffic uses the production HTTPS/WSS backend. Existing web source and server-authoritative simulation logic are not moved into the client.
 
-Commands:
+### Android
+
+- Native Java `Activity` + platform `WebView`.
+- Packaged game files are served from the APK/AAB through the private local origin `https://ironholdfast.local`.
+- The native host intercepts that private origin and serves only packaged assets.
+- External links leave the app; the game backend remains HTTPS/WSS only.
+- Android Gradle Plugin `8.13.2`, Gradle `8.13`, Java `17`.
+- `compileSdk 36` and `targetSdk 36`.
+- App source: `mobile/android/`.
+
+### iOS / iPadOS
+
+- SwiftUI + platform `WKWebView`.
+- Packaged game files are served through the private custom scheme `ironholdfast://app` by `WKURLSchemeHandler`.
+- No App Transport Security exception is added for the production backend.
+- Xcode project is generated reproducibly from `mobile/ios/project.yml` with XcodeGen.
+- CI selects Xcode `26.6` and builds against the installed iOS 26 SDK family.
+- App source: `mobile/ios/`.
+
+### Asset preparation
 
 ```bash
-bun install
-bun test
-bun run mobile:prepare
-npx cap add android
-npx cap add ios
+node --check scripts/prepare-mobile.mjs
+node scripts/prepare-mobile.mjs
 ```
 
-For an existing generated native project use:
+Generated native copies and build output are intentionally ignored by Git. Store signing credentials must never be committed.
 
-```bash
-bun run mobile:sync
-```
+## Current validation state
+
+### Android — PASS
+
+On commit `2cff2bdda0eaed877efb52009d1ae3093c28dac4`, GitHub Mobile CI successfully completed:
+
+1. packaged-game asset preparation;
+2. Android 16 / API 36 SDK setup;
+3. pinned Gradle 8.13 download plus SHA-256 integrity verification;
+4. native Android App Bundle compilation;
+5. AAB existence verification; and
+6. artifact upload.
+
+The produced `app-debug.aab` is a **debug/test artifact**, not a Play-release-signed production bundle.
+
+### iOS — source ready, CI pending
+
+The dependency-light SwiftUI/WKWebView source is committed. The newest macOS validation job is currently queued behind obsolete earlier macOS workflow jobs created before the native-shell pivot. Do not claim iOS compile success until the current native job actually completes successfully.
+
+### Secure npm registry finding
+
+GitHub-hosted runners timed out connecting to `socket-firewall.higgsfield.xyz:443`. The release work did **not** bypass or repoint that repository security control. Instead, the mobile shell was redesigned so native validation requires no npm package installation.
 
 ## Current platform targets
 
-- Android: Capacitor 8.4.2 baseline, Android 16 / API level 36 target.
-- iOS/iPadOS: build with Xcode 26+ and iOS/iPadOS 26 SDK or later.
-- GitHub mobile CI uses macOS 26 with Xcode 26.6 for the iOS validation build.
+- Android: Android 16 / API level 36 target.
+- iOS/iPadOS: Xcode 26+ with iOS/iPadOS 26 SDK or later for App Store submission.
+- GitHub mobile CI selects Xcode 26.6 for iOS validation.
 
 ## Content-rating facts to enter truthfully
 
@@ -81,9 +118,9 @@ Required before an App Store upload can be completed:
 
 1. Active Apple Developer Program membership and App Store Connect access.
 2. Final bundle ID registered to the developer team.
-3. Distribution signing certificate/provisioning handled through Xcode or CI secrets.
-4. App record, age rating, App Privacy answers, screenshots, 1024x1024 app icon, support/privacy URLs, pricing/availability and review contact completed.
-5. Archive built with Xcode 26+ / iOS 26 SDK or later.
+3. Distribution signing certificate/provisioning handled through Xcode or encrypted CI/store secrets.
+4. App record, age rating, App Privacy answers, screenshots, production-quality 1024x1024 app icon, support/privacy URLs, pricing/availability and review contact completed.
+5. Signed archive built with Xcode 26+ / iOS 26 SDK or later.
 6. TestFlight smoke test on representative iPhone/iPad hardware.
 7. Explicit founder approval immediately before production/store submission.
 8. Submit for App Review; public availability occurs only after Apple approval and the selected release mode.
@@ -94,9 +131,9 @@ Required before a Google Play production release can be completed:
 
 1. Active Play Console developer account and app record.
 2. Final application ID.
-3. Play App Signing / upload key configured.
-4. Store listing, screenshots, 512x512 icon, feature graphic, content rating, target audience, ads declaration, Data Safety, privacy policy and app-access declarations completed.
-5. Signed release AAB targeting Android 16 / API 36.
+3. Play App Signing / upload key configured in a secure secret store.
+4. Store listing, screenshots, production-quality 512x512 icon, feature graphic, content rating, target audience, ads declaration, Data Safety, privacy policy and app-access declarations completed.
+5. Signed **release** AAB targeting Android 16 / API 36.
 6. Internal/closed test smoke test on representative Android devices.
 7. If the Play Console account is a personal developer account created after November 13, 2023, Google currently requires a closed test with at least 12 opted-in testers for 14 continuous days before the account can apply for production access. Other account types/history may have different production access.
 8. Explicit founder approval immediately before production/store submission.
@@ -104,4 +141,4 @@ Required before a Google Play production release can be completed:
 
 ## Release safety
 
-Do not commit certificates, provisioning profiles, keystores, passwords, App Store Connect private keys, Google service-account JSON, or Play upload keys. Use encrypted CI/store secret facilities. Production release remains separate from code preparation and test builds.
+Do not commit certificates, provisioning profiles, keystores, passwords, App Store Connect private keys, Google service-account JSON, Play upload keys, or other signing secrets. Use encrypted CI/store secret facilities. Production deployment, branch merge that promotes a release, signing-key creation, and store submission remain separate founder-approval-gated actions.
