@@ -1,0 +1,38 @@
+name: One-shot pathing fix
+
+on:
+  push:
+    branches:
+      - feature/mobile-store-release
+    paths:
+      - scripts/apply-pathing-fix.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'chore: trigger pathing fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/mobile-store-release
+          fetch-depth: 0
+      - name: Apply deterministic pathing and wave fixes
+        run: node scripts/apply-pathing-fix.mjs
+      - name: Verify syntax and release certification
+        run: |
+          node --check src/logic.js
+          node scripts/check-logic.mjs
+          node --test tests/release-certification.test.mjs
+      - name: Commit verified fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/logic.js
+          git diff --cached --check
+          git commit -m 'fix: route units around obstacles and continue waves'
+          git push origin HEAD:feature/mobile-store-release
