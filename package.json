@@ -7,9 +7,21 @@
     "dev": "wrangler dev",
     "test": "vitest run tests/",
     "typecheck": "tsc --noEmit",
-    "check:logic": "bun run scripts/check-logic.mjs"
+    "check:logic": "bun run scripts/check-logic.mjs",
+    "mobile:prepare": "bun run build && bun run scripts/prepare-mobile.mjs",
+    "mobile:add:android": "bun run mobile:prepare && npx cap add android",
+    "mobile:add:ios": "bun run mobile:prepare && npx cap add ios",
+    "mobile:sync": "bun run mobile:prepare && npx cap sync",
+    "mobile:open:android": "npx cap open android",
+    "mobile:open:ios": "npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.4.2"
   },
   "devDependencies": {
+    "@capacitor/android": "8.4.2",
+    "@capacitor/cli": "8.4.2",
+    "@capacitor/ios": "8.4.2",
     "@cloudflare/vitest-pool-workers": "0.20.1",
     "@cloudflare/workers-types": "5.20260804.1",
     "typescript": "7.0.2",
