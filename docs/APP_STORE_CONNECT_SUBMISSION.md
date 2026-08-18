@@ -53,11 +53,21 @@ No login or demo account is required by the current source. The release contains
 
 ## Privacy posture
 
-The current client creates a random local player identifier and sends it, room information, gameplay commands, and game-state traffic to the authoritative server. Hosting/security infrastructure may also process request and diagnostic information.
+Repository evidence establishes that the client creates a random local player identifier and sends it with room/gameplay traffic to the authoritative server. The server persists per-room state in Durable Object storage; that state includes player identifiers/seat ownership data and game simulation state. The reviewed server source does not define a fixed retention period for that persisted room state.
 
-Do not claim `No Data Collected` in App Store Connect unless actual production retention and Apple's definitions have been verified immediately before submission.
+Hosting/security infrastructure may additionally process request and diagnostic information, but a concrete infrastructure-log retention period has not been verified. Do not invent one in App Store Connect or the public policy.
+
+For App Store Connect, do not claim `No Data Collected`. Treat the random player identifier as an identifier used for app functionality and conservatively treat persisted gameplay/room state as linked to that identifier unless production processing is separately verified to de-identify it. Current source shows no advertising or cross-app tracking integration.
 
 The native shell exposes the packaged privacy policy from inside the app.
+
+## Apple privacy-manifest / required-reason API discipline
+
+The native release shell deliberately does not use `UserDefaults` merely for CI/runtime probing. CI stores its readiness marker in the app sandbox instead. If future iOS code introduces a required-reason API, add the appropriate `PrivacyInfo.xcprivacy` declaration and approved reason before submission rather than allowing the API to appear silently.
+
+## Runtime QA
+
+A process-level simulator launch is not sufficient. CI must verify that the packaged `#app` DOM actually loaded, record a successful runtime marker, and capture a screenshot after readiness. A blank/background-only simulator screenshot is a release failure even if the process is running.
 
 ## Age rating
 
