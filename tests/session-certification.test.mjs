@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { playerId, roomId, sessionRules } from "../public/session.js";
 
 function storage(initial = {}) {
@@ -39,4 +40,13 @@ test("corrupt local player identifiers are replaced with bounded safe identifier
   assert.equal(s.values.get(sessionRules.playerKey), id);
   assert.equal(roomId("", s), `solo-${id}`);
   assert.match(roomId("", s), sessionRules.safeRoom);
+});
+
+test("command mode reserves iPhone notch and home-indicator safe areas", async () => {
+  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.match(html, /env\(safe-area-inset-top\)/);
+  assert.match(html, /env\(safe-area-inset-left\)/);
+  assert.match(html, /env\(safe-area-inset-right\)/);
+  assert.match(html, /env\(safe-area-inset-bottom\)/);
+  assert.match(html, /calc\(6px \+ env\(safe-area-inset-top\)\)/);
 });
