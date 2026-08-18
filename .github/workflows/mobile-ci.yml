@@ -114,7 +114,7 @@ jobs:
   ios:
     name: iOS 26 / simulator + device build
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
       - name: Select Xcode 26.3
@@ -154,6 +154,21 @@ jobs:
           build
       - name: Verify iOS simulator app bundle
         run: test -d mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app
+      - name: Launch on iPhone Simulator
+        shell: bash
+        run: |
+          APP="mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app"
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for runtime in d.values() for x in runtime if x.get("isAvailable") and x.get("name","").startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          open -a Simulator --args -CurrentDeviceUDID "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" com.ironholdfast.game
+          sleep 5
+          test -d "$(xcrun simctl get_app_container "$UDID" com.ironholdfast.game app)"
+          mkdir -p mobile/ios/smoke
+          xcrun simctl io "$UDID" screenshot mobile/ios/smoke/launch.png
+          test -s mobile/ios/smoke/launch.png
       - name: Build device Release without signing
         run: >-
           xcodebuild
@@ -166,8 +181,25 @@ jobs:
           CODE_SIGNING_ALLOWED=NO
           CODE_SIGNING_REQUIRED=NO
           build
-      - name: Verify unsigned iOS device app bundle
-        run: test -d mobile/ios/device-build/Build/Products/Release-iphoneos/IronHoldfast.app
+      - name: Verify unsigned iOS device bundle and metadata
+        shell: bash
+        run: |
+          APP="mobile/ios/device-build/Build/Products/Release-iphoneos/IronHoldfast.app"
+          PLIST="$APP/Info.plist"
+          test -d "$APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = 'com.ironholdfast.game'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = '1.0.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" = '1'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST")" = '16.0'
+          test -s "$APP/www/index.html"
+          test -s "$APP/www/battle.html"
+          test -s "$APP/www/privacy.html"
+          test -s "$APP/www/support.html"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-simulator-smoke
+          path: mobile/ios/smoke/launch.png
+          if-no-files-found: error
       - uses: actions/upload-artifact@v6
         with:
           name: iron-holdfast-ios-simulator-app
