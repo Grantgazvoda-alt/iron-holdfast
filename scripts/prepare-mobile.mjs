@@ -3,8 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const source = resolve(root, "dist", "client");
-const mobile = resolve(root, "dist", "mobile");
+const source = resolve(root, "public");
+const mobile = resolve(root, "mobile", "www");
 const backend = new URL(process.env.HF_MOBILE_SERVER || "https://iron-empire.higgsfield.app");
 
 if (backend.protocol !== "https:") {
@@ -48,4 +48,4 @@ await writeFile(
   `${JSON.stringify({ app: "Iron Holdfast", backend: backend.origin, preparedAt: new Date().toISOString() }, null, 2)}\n`,
 );
 
-console.log(`prepared native web assets in dist/mobile -> ${backend.origin}`);
+console.log(`prepared native web assets in mobile/www -> ${backend.origin}`);
