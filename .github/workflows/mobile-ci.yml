@@ -76,8 +76,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check all live store-facing URLs
+      - name: Check live release URLs
         shell: bash
+        env:
+          REQUIRE_LIVE_STORE_URLS: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: |
           fail=0
           check_url() {
@@ -96,8 +98,12 @@ jobs:
             fi
           }
           check_url 'Live game' 'https://iron-empire.higgsfield.app/' 'Iron Holdfast|IRON HOLDFAST' /tmp/game.html
-          check_url 'Privacy policy' 'https://iron-empire.higgsfield.app/privacy.html' 'Iron Holdfast Privacy Policy' /tmp/privacy.html
-          check_url 'Support page' 'https://iron-empire.higgsfield.app/support.html' 'Iron Holdfast Support' /tmp/support.html
+          if test "$REQUIRE_LIVE_STORE_URLS" = '1'; then
+            check_url 'Privacy policy' 'https://iron-empire.higgsfield.app/privacy.html' 'Iron Holdfast Privacy Policy' /tmp/privacy.html
+            check_url 'Support page' 'https://iron-empire.higgsfield.app/support.html' 'Iron Holdfast Support' /tmp/support.html
+          else
+            echo '::notice::PR CI validates privacy/support pages from packaged branch sources. Run Mobile CI manually after production deployment to require the live store URLs.'
+          fi
           exit "$fail"
 
   android:
@@ -161,6 +167,9 @@ jobs:
           AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           ADB="$ANDROID_HOME/platform-tools/adb"
           test -x "$ADB"
+          "$ADB" kill-server || true
+          "$ADB" start-server
+          "$ADB" devices -l
           if test -e /dev/kvm; then sudo chmod 666 /dev/kvm || true; fi
           echo no | "$AVDMANAGER" create avd --force --name ironholdfast-ci --package 'system-images;android-36;google_apis;x86_64'
           "$ANDROID_HOME/emulator/emulator" \
@@ -170,16 +179,45 @@ jobs:
             -no-snapshot \
             -no-boot-anim \
             -gpu swiftshader_indirect >/tmp/emulator.log 2>&1 &
-          "$ADB" wait-for-device
+          EMULATOR_PID=$!
+          device_seen=0
+          for i in $(seq 1 90); do
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo '::error::Android emulator exited before registering with ADB.'
+              cat /tmp/emulator.log || true
+              exit 1
+            fi
+            if "$ADB" devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { found=1 } END { exit !found }'; then
+              device_seen=1
+              break
+            fi
+            sleep 2
+          done
+          if test "$device_seen" != '1'; then
+            echo '::error::Android emulator did not register with ADB within 180 seconds.'
+            "$ADB" devices -l || true
+            tail -200 /tmp/emulator.log || true
+            exit 1
+          fi
           booted=0
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             if test "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = '1'; then
               booted=1
               break
             fi
-            sleep 5
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo '::error::Android emulator exited during boot.'
+              tail -200 /tmp/emulator.log || true
+              exit 1
+            fi
+            sleep 2
           done
-          test "$booted" = '1'
+          if test "$booted" != '1'; then
+            echo '::error::Android emulator registered with ADB but did not complete boot within 240 seconds.'
+            "$ADB" devices -l || true
+            tail -200 /tmp/emulator.log || true
+            exit 1
+          fi
           "$ADB" install -r "$APK"
           "$ADB" shell am start -W -n com.ironholdfast.game/.MainActivity
           sleep 5
@@ -192,6 +230,7 @@ jobs:
             echo 'Android runtime crash detected.' >&2
             exit 1
           fi
+          "$ADB" emu kill || true
       - uses: actions/upload-artifact@v6
         with:
           name: iron-holdfast-android-debug-aab
