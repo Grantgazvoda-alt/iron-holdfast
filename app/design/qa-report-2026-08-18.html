@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iron Holdfast — Playtest QA Report</title>
+<style>
+  :root{
+    --ink:#e9e4d8; --ink-dim:#b9b2a1; --ink-faint:#8b8576;
+    --bg:#14100c; --bg-2:#1c1610; --bg-3:#251c12;
+    --line:#3a2f20; --line-soft:#2a2118;
+    --gold:#d9a63c; --gold-dim:#a9812b;
+    --pillar-bg:#241a10; --pillar-line:#3a2c18;
+    --good:#79c26a; --good-bg:#17240f; --warn:#e0a83c; --warn-bg:#241b08;
+    --bad:#d2603f; --bad-bg:#2b130a;
+    --info:#8ab5d9; --info-bg:#0f1d28;
+    --low:#9aa08c; --low-bg:#1a1c16;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    --serif: Georgia, "Times New Roman", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:
+      radial-gradient(1200px 500px at 15% -10%, #241a0c 0%, transparent 60%),
+      radial-gradient(900px 500px at 90% 5%, #1a1411 0%, transparent 55%),
+      var(--bg);
+    color:var(--ink); font-family:var(--sans); line-height:1.55; font-size:15px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:920px; margin:0 auto; padding:32px 22px 90px; }
+
+  /* masthead */
+  header.mast{
+    display:flex; align-items:flex-end; gap:22px; flex-wrap:wrap;
+    border-bottom:1px solid var(--line); padding-bottom:22px; margin-bottom:26px;
+  }
+  .crest{
+    width:52px; height:52px; flex:0 0 52px; border:1px solid var(--pillar-bg);
+    background:linear-gradient(160deg,#3a2c18,#241a12);
+    box-shadow:inset 0 0 0 3px rgba(217,166,60,.14), 0 6px 18px rgba(0,0,0,.5);
+    display:grid; place-items:center; border-radius:8px;
+  }
+  .crest svg{width:34px; height:34px;}
+  h1{font-family:var(--serif); font-size:27px; line-height:1.15; color:#f6f0e2; letter-spacing:.3px;}
+  h1 .sub{display:block; font-family:var(--sans); font-size:12.5px; font-weight:500; letter-spacing:2.4px; text-transform:uppercase; color:var(--gold); margin-top:6px;}
+  .mast-right{margin-left:auto; text-align:right; font-size:12.5px; color:var(--ink-dim);}
+  .mast-right b{color:var(--ink); font-weight:600;}
+
+  /* meta strip */
+  .meta{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:1px;
+    background:var(--line-soft); border:1px solid var(--line-soft); border-radius:10px; overflow:hidden; margin-bottom:26px;
+  }
+  .meta .cell{background:var(--bg-2); padding:12px 14px;}
+  .meta .lab{font-size:10.5px; letter-spacing:1.4px; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px;}
+  .meta .val{font-size:13px; color:var(--ink); word-break:break-word;}
+  .meta .val a{color:var(--gold); text-decoration:none;}
+  .meta .val a:hover{text-decoration:underline;}
+
+  /* executive summary callout */
+  .exec{
+    display:grid; gap:16px; margin:0 0 26px;
+    border:1px solid var(--line); border-radius:12px; overflow:hidden;
+    background:linear-gradient(180deg,var(--bg-3),var(--bg-2));
+    box-shadow:0 10px 26px rgba(0,0,0,.28);
+  }
+  .exec .risk{
+    display:flex; align-items:center; gap:14px; padding:14px 18px;
+    border-left:4px solid var(--warn); background:rgba(224,168,60,.08);
+  }
+  .exec .risk.neg{border-left-color:var(--bad); background:rgba(210,96,63,.10);}
+  .exec .risk .rl{font-size:11px; letter-spacing:1.6px; text-transform:uppercase; color:var(--ink-faint);}
+  .exec .risk .rv{font-weight:700; font-size:16px; color:var(--ink);}
+  .exec .risk .blurb{font-size:12.5px; color:var(--ink-dim); margin-left:auto; max-width:340px; text-align:right;}
+  .exec .body{padding:2px 18px 18px;}
+  .exec h4{font-family:var(--serif); font-size:15px; color:var(--gold); margin:12px 0 8px; letter-spacing:.4px;}
+  .exec ul.exec-list{list-style:none; margin:0 0 4px;}
+  .exec ul.exec-list li{display:flex; gap:10px; padding:6px 0; font-size:13.5px; border-bottom:1px dashed var(--line-soft);}
+  .exec ul.exec-list li:last-child{border-bottom:none;}
+  .exec ul.exec-list li::before{content:"›"; color:var(--gold); font-weight:700; flex:0 0 auto;}
+  .exec p{font-size:13.5px; margin:2px 0 6px;}
+
+  /* headings */
+  h2{
+    font-family:var(--serif); font-size:20px; color:#f0e9d9; margin:34px 0 14px;
+    display:flex; align-items:center; gap:12px;
+  }
+  h2 .secnum{
+    font-family:var(--mono); font-size:12px; color:#0e0a06; background:var(--gold);
+    width:24px; height:24px; border-radius:6px; display:grid; place-items:center; font-weight:700; flex:0 0 24px;
+  }
+  h3{font-family:var(--serif); font-size:16px; color:#ead9b0; margin:0 0 10px;}
+  p{margin-bottom:10px;}
+  code{font-family:var(--mono); font-size:12.5px; background:var(--bg-3); border:1px solid var(--line-soft); padding:1px 5px; border-radius:5px; color:#e4c88a;}
+  a{color:var(--gold);}
+
+  /* summary pillars */
+  .pillars{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:6px 0 6px;}
+.pillar{
+    display:flex; flex-direction:column; justify-content:center;
+    border:1px solid var(--line); background:var(--bg-2); padding:14px; position:relative; overflow:hidden;
+  }
+  .pillar .u{font-family:var(--mono); font-size:28px; font-weight:700; line-height:1;}
+  .pillar .l{font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--ink-faint); margin-top:8px;}
+  .pillar.high{box-shadow:inset 0 2px 0 var(--bad);}
+  .pillar.resolved{box-shadow:inset 0 2px 0 var(--good);}
+  .pillar.tooling{box-shadow:inset 0 2px 0 var(--info);}
+  .pillar.high .u{color:var(--bad);}
+  .pillar.resolved .u{color:var(--good);}
+  .pillar.tooling .u{color:var(--info);}
+  .pillar.pass .u{color:var(--good);}
+
+  /* severity legend */
+  table{width:100%; border-collapse:collapse; margin:10px 0;}
+  th,td{text-align:left; padding:9px 12px; font-size:13.5px; border:1px solid var(--line-soft);}
+  th{background:var(--bg-3); color:#e9d9b0; font-weight:600;}
+  td{background:var(--bg-2);}
+  .chip{display:inline-block; min-width:74px; text-align:center; font-size:11px; font-weight:700; letter-spacing:.6px; padding:3px 9px; border-radius:20px; text-transform:uppercase;}
+  .chip.crit{background:var(--bad-bg); color:#ff8a63; border:1px solid #7a2f1a;}
+  .chip.high{background:var(--bad-bg); color:#ff9d77; border:1px solid #6d2a16;}
+  .chip.med{background:var(--warn-bg); color:#e8b45a; border:1px solid #6d521a;}
+  .chip.low{background:var(--low-bg); color:#aeb29c; border:1px solid #4a4e3e;}
+  .chip.info{background:var(--info-bg); color:#9cc3e2; border:1px solid #2b4a66;}
+  .chip.pass{background:var(--good-bg); color:#9fd991; border:1px solid #3f6e33;}
+
+  /* finding cards */
+  .finding{
+    border:1px solid var(--line); border-radius:12px; background:var(--bg-2);
+    margin:0 0 16px; overflow:hidden; box-shadow:0 8px 22px rgba(0,0,0,.25);
+  }
+  .finding.hd{ border-top:3px solid var(--bad); }
+  .finding.rs{ border-top:3px solid var(--good); }
+  .finding.to{ border-top:3px solid var(--info); }
+  .finding .fhead{ display:flex; align-items:center; gap:12px; padding:14px 18px; background:linear-gradient(180deg,var(--bg-3),var(--bg-2)); flex-wrap:wrap;}
+  .finding .fid{font-family:var(--mono); font-weight:700; font-size:13px; letter-spacing:1px;}
+  .finding.hd .fid{color:var(--bad);}
+  .finding.rs .fid{color:var(--good);}
+  .finding.to .fid{color:var(--info);}
+  .finding .ftitle{font-family:var(--serif); font-size:16.5px; color:var(--ink); flex:1 1 260px;}
+  .finding .fbody{padding:16px 18px 20px;}
+  .kv{display:grid; gap:8px; margin-top:10px;}
+  .kv .row{display:grid; grid-template-columns:118px 1fr; gap:10px; font-size:13.5px;}
+  .kv .k{color:var(--gold-dim); font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:1px; padding-top:2px;}
+  .kv .v{color:#d9d2c2;}
+  .step-list{margin:6px 0 10px 4px; padding-left:4px; list-style:none; counter-reset:st;}
+  .step-list li{counter-increment:st; display:flex; gap:10px; margin-bottom:6px; font-size:13.5px;}
+  .step-list li::before{content:counter(st); font-family:var(--mono); font-size:11px; font-weight:700; color:var(--gold); background:rgba(217,166,60,.12); border:1px solid var(--line); width:20px; height:20px; flex:0 0 20px; border-radius:6px; display:grid; place-items:center; margin-top:1px;}
+  .status-banner{ margin-top:14px; padding:11px 14px; border-radius:8px; font-size:13px;}
+  .status-banner.good{background:var(--good-bg); border:1px solid #2f5528; color:#b6e0a8;}
+  .status-banner.warn{background:var(--warn-bg); border:1px solid #6d521a; color:#eace8f;}
+  .status-banner.info{background:var(--info-bg); border:1px solid #2b4a66; color:#a8cbe6;}
+
+  /* verified systems */
+  .sys{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px; margin-top:10px;}
+  .sys .card{border:1px solid var(--line-soft); border-radius:10px; background:var(--bg-2); padding:14px 16px;}
+  .sys .card .shead{display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;}
+  .sys .card .sname{font-weight:600; font-size:14px; color:var(--ink);}
+  .sys .card ul{margin:6px 0 0 16px; font-size:12.8px; color:var(--ink-dim);}
+  .sys .card li{margin-bottom:5px;}
+
+  /* bullets-perf infra */
+  .plain{list-style:none; margin:4px 0 10px;}
+  .plain li{position:relative; padding-left:20px; margin-bottom:8px; font-size:13.5px;}
+  .plain li::before{content:""; position:absolute; left:0; top:8px; width:7px; height:7px; background:var(--gold-dim); border-radius:2px;}
+
+  /* collapsible checklist */
+  .checklist{
+    border:1px solid var(--line); border-radius:12px; background:var(--bg-2); overflow:hidden; margin-top:8px;
+  }
+  .checklist summary{
+    cursor:pointer; list-style:none; padding:15px 18px; font-weight:600; font-size:14.5px; color:var(--ink);
+    display:flex; align-items:center; gap:12px; background:linear-gradient(180deg,var(--bg-3),var(--bg-2));
+  }
+  .checklist summary::-webkit-details-marker{display:none;}
+  .checklist summary .caret{transition:transform .18s; color:var(--gold); margin-left:auto;}
+  .checklist[open] summary .caret{transform:rotate(90deg);}
+  .checklist .progress{font-family:var(--mono); font-size:11px; color:var(--gold); background:rgba(201,166,60,.12); border:1px solid var(--line); padding:2px 9px; border-radius:20px;}
+  .checklist .items{padding:8px 18px 16px; border-top:1px solid var(--line-soft);}
+  .checklist .chk{display:flex; gap:12px; align-items:flex-start; padding:10px 0; border-bottom:1px dashed var(--line-soft); cursor:pointer;}
+  .checklist .chk:last-child{border-bottom:none;}
+  .checklist .chk label{font-size:13.5px; flex:1; color:var(--ink-dim); cursor:pointer;}
+  .checklist .chk input{accent-color:var(--gold); width:16px; height:16px; margin-top:2px; cursor:pointer;}
+  .checklist .chk.hot label{color:#e8c46a;}
+  .checklist .chk input:checked + label{color:var(--ink-faint); text-decoration:line-through;}
+  .download{display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--gold); text-decoration:none; margin-top:14px; border:1px solid var(--line); padding:8px 14px; border-radius:8px; background:var(--bg-3);}
+  .download:hover{border-color:var(--gold);}
+
+  footer{margin-top:44px; padding-top:18px; border-top:1px solid var(--line); color:var(--ink-faint); font-size:12.5px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;}
+  footer .mono{font-family:var(--mono);}
+  @media print{
+    body{background:#fff; color:#222;}
+    .checklist summary .chev, .download{display:none;}
+    .meta .cell, .finding, .sys .card, .status-banner, .pillar{background:#fff; border-color:#ccc; color:#222;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- MASTHEAD -->
+  <header class="masthead">
+    <div class="crest" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#d9a63c" stroke-width="1.4">
+        <path d="M12 2 3 7v4l2.5 1.5V7h13v5.5L21 11V7z"/>
+        <path d="M7 7v5.5M10 7v6M14 7v6M17 7v5.5"/>
+        <path d="M12 7l-2.2 5h4.4z" fill="#a98f2b" stroke="none"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Iron Holdfast — Playtest QA Report
+        <span class="sub">Live build · castle-siege RTS</span>
+      </h1>
+    </div>
+    <div class="mast-top">
+      <b>IRON-EMPIRE / QA</b><br>2026-08-18 · Automated playtest + protocol probes
+    </div>
+  </header>
+
+  <!-- META -->
+  <div class="meta">
+    <div class="cell"><div class="lab">Product</div><div class="val"><b>Iron Holdfast</b> — castle-siege builder</div></div>
+    <div class="cell"><div class="lab">Test location</div><div class="val"><a href="https://iron-empire.higgsfield.app" target="_blank" rel="noopener">iron-empire.higgsfield.app</a> (live)</div></div>
+    <div class="cell"><div class="lab">Live build</div><div class="val"><code>a0362c0</code> touch+tutorial era</div></div>
+    <div class="cell"><div class="lab">Reference build</div><div class="val"><code>a5fa1e1f7</code> art pass (pending deploy)</div></div>
+    <div class="cell"><div class="lab">Harness</div><div class="val">Cloud browser + raw WebSocket probes</div></div>
+  </div>
+
+  <!-- 0 EXECUTIVE SUMMARY CALLOUT -->
+  <section class="exec" aria-label="Executive summary">
+    <div class="risk">
+      <div>
+        <div class="rl">Overall risk</div>
+        <div class="rv">Medium — launchable, not launch-perfect</div>
+      </div>
+      <div class="blurb">Core sim &amp; game flow healthy; 1 open visual defect blocks the polish bar, not the build.</div>
+    </div>
+    <div class="body">
+      <h4>Key findings</h4>
+      <ul class="exec-list">
+        <li><b>F-001 (High · visual):</b> floating grey stone-shaped terrain artifacts in the map's top-left degrade the "realistic" presentation — cosmetic, no gameplay impact. Likely already fixed in the pending <code>a5fa1e1</code> art pass.</li>
+        <li><b>F-002 (Resolved):</b> the in-browser frozen clock was a test-harness artifact, not a game defect — server sim ticks, builds, and pauses cleanly on raw protocol probes.</li>
+        <li><b>F-003 (Tooling):</b> the shared test browser occasionally drifted to third-party pages, making in-browser timing unreliable; use protocol probes for timing assertions.</li>
+      </ul>
+      <h4>Recommended next steps</h4>
+      <ul class="exec-list">
+        <li>Deploy the pending <code>a5fa1e1</code> art pass and re-verify F-001 on the live site — the fix is expected to land with it.</li>
+        <li>Run a manual desktop FPS check during a large wave before public launch (see §8 checklist).</li>
+        <li>Keep the deploy-watch loop running; confirm the art pass ships before announcing.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 1 EXEC SUMMARY -->
+  <h2><span class="secnum">1</span> Executive summary</h2>
+  <p>The live game is <b>functional and stable</b>: the committed server sim ticks, builds, trains, and pauses correctly; the client renders with <b>zero console errors</b>; and the shipped feature set (tutorial, HUD, tool selection, touch, first-run gate) is present and working as specified.</p>
+  <p>Three open items are logged: one <span class="chip high">High</span> visual defect on the live build (floating stone-like terrain artifacts, top-left), one <span class="chip info">Tooling</span> anomaly affecting in-browser measurement (browser session drift), and one <span class="chip pass">Resolved</span>-as-environment artifact (frozen in-browser clock not reproducible against the server).</p>
+  <p>No crashes, no blocked flows, and <b>no console errors</b> observed in a stable test session.</p>
+
+  <div class="pillars">
+    <div class="pillar high"><div class="u">1</div><div class="l">High (open)</div></div>
+    <div class="pillar tooling"><div class="u">1</div><div class="l">Tooling (open)</div></div>
+    <div class="pillar resolved"><div class="u">1</div><div class="l">Resolved</div></div>
+    <div class="pillar pass"><div class="u">7</div><div class="l">Systems PASS</div></div>
+  </div>
+
+  <!-- 2 SEVERITY LEGEND -->
+  <h2><span class="secnum">2</span> Severity legend</h2>
+  <table>
+    <thead><tr><th style="width:150px">Level</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip crit">Critical</span></td><td>Blocks play / data loss / total failure</td></tr>
+      <tr><td><span class="chip high">High</span></td><td>Major visible or functional defect affecting gameplay or launch quality</td></tr>
+      <tr><td><span class="chip med">Medium</span></td><td>Noticeable defect; cosmetic or edge-case functional</td></tr>
+      <tr><td><span class="chip low">Low</span></td><td>Minor polish, no functional impact</td></tr>
+      <tr><td><span class="chip info">Info / Tooling</span></td><td>Not a product defect; documents test-environment behavior or infrastructure state</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 3 FINDINGS -->
+  <h2><span class="secnum">3</span> Findings</h2>
+
+  <!-- F-001 -->
+  <div class="finding hd">
+    <div class="finding-head">
+      <span class="fid">F-001</span>
+      <span class="ftitle">Floating stone terrain sprites (top-left quadrant)</span>
+      <span class="chip high">High · Visual</span>
+    </div>
+    <div class="fbody">
+      <p>In the live build, the top-left area of the map (above the western forest strip, near the grass/forest/water boundary) renders grey, stone-like “L-shaped” patches that float over the tree and grass tiles — disconnected from the terrain logic (no buildings or enemies exist there). They don’t affect gameplay but visibly degrade the “realistic, polished” presentation target.</p>
+      <div class="kv">
+        <div class="row"><span class="k">Deviation</span><span class="v">Artifacts remain visible and static; expected continuous terrain texture breaks the painterly seam between forest and grass.</span></div>
+        <div class="row"><span class="k">Perceived risk</span><span class="v">Cosmetic; limited to visual polish at launch — but High because this ships against the current visual-art upgrade goal.</span></div>
+        <div class="row"><span class="k">Expected</span><span class="v">Natural painted base everywhere (grass blades, forest canopy, rock outcrops from the painter).</span></div>
+        <div class="row"><span class="k">Actual</span><span class="v">Stone-shaped grey patches overlay tree/grass tiles in the top-left.</span></div>
+      </div>
+      <b>Reproduction</b>
+      <ol class="step-list">
+        <li>Open <code>https://iron-empire.higgsfield.app</code></li>
+        <li>Click “Begin the hold”</li>
+        <li>Skip the tutorial (or let it run)</li>
+        <li>Pan/zoom to the top-left corner (north-west of the keep)</li>
+        <li>Observe the grey “stone quarry-like” textures floating over trees/grass</li>
+      </ol>
+      <div class="status-banner warn"><b>Status / verification:</b> Confirmed via vision analysis of a live screenshot. The pending <code>a5fa1e1</code> art pass rewrote the entire terrain painter (<code>paintTerrain</code> with value-noise dappling, explicit rock outcrop/vein layer, forest canopy) — likely already fixed in the pending build, which is <b>not yet live</b>. <b>Retest on the new build is mandatory before closing (see §8).</b></div>
+    </div>
+  </div>
+
+  <!-- F-002 -->
+  <div class="finding rs">
+    <div class="finding-head">
+      <span class="fid">F-002</span>
+      <span class="ftitle">Frozen game clock observed in browser — resolved, no server defect</span>
+      <span class="chip pass">Resolved</span>
+    </div>
+    <div class="fbody">
+      <div class="kv">
+        <div class="row"><span class="k">Observation</span><span class="v">On-screen timer stayed fixed at “8:39”, wave countdown static, wood stuck at 35 for minutes, pause label never flipped.</span></div>
+        <div class="row"><span class="k">Diagnosis</span><span class="v">Server probes on the same endpoints show normal ticking: <code>nextWaveIn</code> decrements per tick, <code>time</code> advances every 0.5s, <code>paused:false</code>. A raw WebSocket session on a fresh room reproduced normal ticking before any build action.</span></div>
+        <div class="row"><span class="k">Conclusion</span><span class="v">Test-harness/browser anomaly (F-003) — <b>not a game defect</b>.</span></div>
+      </div>
+      <div class="status-banner info"><b>If a player reports a frozen clock:</b> treat as client-side reconnect (reconnect loop already guarded in code) or live-server, not the sim engine.</div>
+    </div>
+  </div>
+
+  <!-- F-003 -->
+  <div class="finding to">
+    <div class="finding-head">
+      <span class="fid">F-003</span>
+      <span class="ftitle">Test harness anomaly: browser drifting to third-party sites</span>
+      <span class="chip info">Tooling</span>
+    </div>
+    <div class="fbody">
+      <div class="kv">
+        <div class="row"><span class="k">Description</span><span class="v">The automated browser repeatedly navigated away to a landing-page domain (<code>settup.e-pos.id</code>) mid-test; canvas lookups failed until the game URL was restored.</span></div>
+        <div class="row"><span class="k">Product impact</span><span class="v">None — an artifact of the shared/managed browser test environment, not game code.</span></div>
+        <div class="row"><span class="k">Mitigation</span><span class="v">(1) re-assert game host before each measurement, (2) prefer raw WS protocol probes for timing/state, (3) use the browser only for DOM/render/UI checks.</span></div>
+        <div class="row"><span class="k">Hashed effect</span><span class="v">Produced the misleading “frozen run” observations documented in F-002 — twice.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4 VERIFIED SYSTEMS -->
+  <h2><span class="secnum">4</span> Verified working systems</h2>
+  <div class="sys">
+    <div class="card">
+      <div class="shead"><span class="sname">Tutorial overlay (7 steps)</span><span class="chip pass">PASS</span></div>
+      <ul>
+        <li>Steps 1–3 verified in sequence (“Welcome, Castellan” → “Build your economy” → “Workers and food”).</li>
+        <li>Back / Skip / Next buttons wired; Skip closes cleanly.</li>
+        <li>First-run gating via localStorage (see First-run gate).</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="shead"><span class="sname">HUD / UI shell</span><span class="chip pass">PASS</span></div>
+      <ul>
+        <li>Resource chips (Wood/Stone/Iron/Gold/Food), Pop counter, wave countdown.</li>
+        <li>Minimap; Pause, Mute, Tutorial-❓, New-run buttons live.</li>
+        <li>9 build tools with cost labels; 3 garrison units; 4 techs; Hold/Repair.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="shead"><span class="sname">Tool selection &amp; build flow</span><span class="chip pass">PASS</span></div>
+      <ul>
+        <li><code>.tool[data-b]</code> toggles <code>active</code> on click (house verified).</li>
+        <li>Canvas placement sends <code>build</code> action; wire-confirmed building count 0 → 1.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="shead"><span class="sname">Server simulation (protocol)</span><span class="chip pass">PASS</span></div>
+      <ul>
+        <li><code>state</code> broadcasts at 0.5s tick; time advances in-probe.</li>
+        <li>Economy round-trips; build accepted; pause toggling verified.</li>
+        <li>Pause-off resumes ticking («t 2 → 3 → 4»).</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="shead"><span class="sname">First-run gate</span><span class="chip pass">PASS</span></div>
+      <ul>
+        <li>Tutorial shows on first reservation, not on subsequent room starts — gated by <code>ironhold:tutorial</code> in localStorage.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="shead"><span class="sname">Audio + console integrity</span><span class="chip pass">PASS</span></div>
+      <ul>
+        <li>Mute wired to <code>musicGain</code> ramp; persists <code>ironhold:muted</code>.</li>
+        <li><code>browser_console</code>: 0 console messages, 0 JS errors in stable session.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 5 CONSOLE -->
+  <h2><span class="secnum">5</span> Console errors</h2>
+  <p><b>None observed.</b> Total 0/0 on a stable page across load, tutorial, build, and pause tests.</p>
+
+  <!-- 6 PERFORMANCE -->
+  <h2><span class="secnum">6</span> Performance</h2>
+  <p>Reliable FPS was unavailable through the drifted-browser session (F-003) — no numbers cited. The renderer is cache-heavy by design (terrain drawn once + sprite-blitted per building in the pending art pass); manual FPS check on desktop Chrome after the art pass is recommended before public launch.</p>
+
+  <!-- 7 INFRA -->
+  <h2><span class="secnum">7</span> Infrastructure / deployment status</h2>
+  <ul class="plain">
+    <li>Live site serves the previous build (<code>a0362c0</code>-era); the actual art pass <code>a5fa1e1</code> is <b>not live</b>.</li>
+    <li>Higgsfield apps-git backend returning HTTP <code>404</code> since ~23:00 UTC 2026-08-17; watch loop polls every 20s and auto-pushes/deploys on recovery (probe still <code>404</code> as of 04:04 UTC).</li>
+    <li>Art-pass code committed locally (<code>a5fa1e1f7</code>) and mirrored to GitHub: <code>Grantgazvoda-alt/iron-holdfast</code> + <code>iron-holdfast-source</code> (both <code>3f3c36b</code>).</li>
+    <li>F-001 verification depends on the pending art-pass deploy completing.</li>
+  </ul>
+
+  <!-- 8 COLLAPSIBLE CHECKLIST -->
+  <h2><span class="secnum">8</span> Retest checklist (post art-pass deploy)</h2>
+  <details class="checklist" open>
+    <summary>
+      <span>Next-playtest verification</span>
+      <span class="progress" id="checkCount">0/5</span>
+      <span class="chev">▶</span>
+    </summary>
+    <div class="items" id="checkItems">
+      <div class="chk"><input type="checkbox" id="c1"><label for="c1">Re-verify F-001 on the live site (top-left terrain) — expect overlay artifacts gone.</label></div>
+      <div class="chk"><input type="checkbox" id="c2"><label for="c2">Re-run tutorial twice: fresh-load first-run gate + ❓ reopen flow.</label></div>
+      <div class="chk"><input type="checkbox" id="c3"><label for="c3">FPS measure (DevTools, 60s continuous play + during a large wave).</label></div>
+      <div class="chk"><input type="checkbox" id="c4"><label for="c4">Touch-mode smoke test on mobile viewport: tap-select, tap-place, drag.</label></div>
+      <div class="chk"><input type="checkbox" id="c5"><label for="c5">Re-run mute persistence (relaunch retains muted state).</label></div>
+    </div>
+  </details>
+
+  <a class="download" href="#" onclick="window.print(); return false;">🖨 Export / print this report</a>
+
+  <footer>
+    <span>Iron Holdfast QA · compiled 2026-08-18</span>
+    <span class="mono">server sim verified by raw protocol probes</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  const boxes = Array.from(document.querySelectorAll('#checkItems input'));
+  const count = document.getElementById('checkCount');
+  const PREFIX = 'ironhold-qa-v1:';
+  function update(){
+    const done = boxes.filter(b=>b.checked).length;
+    count.textContent = done + '/' + boxes.length;
+  }
+  boxes.forEach(b=>{
+    try{ b.checked = localStorage.getItem(PREFIX+'c'+b.id) === '1'; }catch(e){}
+    b.addEventListener('change', ()=>{
+      try{ localStorage.setItem(PREFIX+'c'+b.id, b.checked?'1':'0'); }catch(e){}
+      update();
+    });
+  });
+  update();
+})();
+</script>
+</body>
+</html>

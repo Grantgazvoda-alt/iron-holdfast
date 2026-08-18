@@ -397,16 +397,17 @@ function paintTerrain(g, c) {
     g.fillStyle = "#7A8286";
     g.fillRect(0, 0, 64, 64);
     for (let i = 0; i < 260; i++) {
-      const x = r() * 64;
-      const y = r() * 64;
+      const x = r() * 62;
+      const y = r() * 62;
       g.fillStyle = r() < 0.5 ? "rgba(60,64,70,.4)" : "rgba(160,168,172,.35)";
       g.fillRect(x, y, 2, 2);
     }
-    // outcrops as faceted faces
+    // outcrops as faceted faces — kept strictly inside the tile so nothing bleeds
+    // onto the neighbouring grass/forest tiles
     for (let i = 0; i < 4; i++) {
-      const x = 8 + r() * 48;
-      const y = 8 + r() * 48;
-      const s = 9 + r() * 6;
+      const x = 14 + r() * 34;
+      const y = 14 + r() * 34;
+      const s = 7 + r() * 5;
       g.fillStyle = "#585C52";
       g.beginPath();
       g.moveTo(x - s, y + s * 0.4);
@@ -435,17 +436,17 @@ function paintTerrain(g, c) {
     }
   } else if (c === "i") {
     paintTerrain(g, "g");
-    // iron ore veins embedded in the earth
+    // iron ore veins embedded in the earth — boulders kept inside the tile
     for (let i = 0; i < 4; i++) {
-      const x = 8 + r() * 48;
-      const y = 8 + r() * 48;
+      const x = 10 + r() * 36;
+      const y = 10 + r() * 36;
       g.fillStyle = "#3b3f46";
       g.beginPath();
-      g.ellipse(x, y, 8 + r() * 4, 6 + r() * 2, r() * 3, 0, 7);
+      g.ellipse(x, y, 7 + r() * 3, 5 + r() * 2, r() * 3, 0, 7);
       g.fill();
       g.fillStyle = "#51565c";
       g.beginPath();
-      g.ellipse(x - 2, y - 2, 5 + r() * 2, 3.5, r() * 3, 0, 7);
+      g.ellipse(x - 2, y - 2, 4 + r() * 2, 3, r() * 3, 0, 7);
       g.fill();
       g.fillStyle = "rgba(140,150,160,.5)";
       for (let k = 0; k < 4; k++) g.fillRect(x - 4 + r() * 8, y - 3 + r() * 6, 1.5, 1.5);
@@ -453,8 +454,8 @@ function paintTerrain(g, c) {
   } else if (c === "a") {
     paintTerrain(g, "g");
     for (let i = 0; i < 4; i++) {
-      const x = 10 + r() * 44;
-      const y = 10 + r() * 44;
+      const x = 12 + r() * 34;
+      const y = 12 + r() * 34;
       g.fillStyle = "#8f6c1f";
       g.beginPath();
       g.ellipse(x, y, 5 + r() * 3, 3.5, r() * 3, 0, 7);
