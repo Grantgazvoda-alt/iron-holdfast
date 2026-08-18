@@ -169,9 +169,10 @@ jobs:
           "$ADB" devices -l
           if test -e /dev/kvm; then sudo chmod 666 /dev/kvm || true; fi
           mkdir -p "$HOME/.android/avd"
-          printf 'no\n' | "$AVDMANAGER" --verbose create avd \
+          "$AVDMANAGER" --verbose create avd \
             -n ironholdfast-ci \
             -k 'system-images;android-36;google_apis;x86_64' \
+            -d pixel_6 \
             -f
           "$ANDROID_HOME/emulator/emulator" -list-avds
           "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fxq ironholdfast-ci
