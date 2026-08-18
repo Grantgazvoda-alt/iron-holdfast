@@ -67,8 +67,8 @@ test("wave director continues after the first wave queue drains", () => {
     ...state,
     keep: { hp: 1_000_000, max: 1_000_000 },
   };
-  for (let i = 0; i < 700 && state.wave < 2; i++) state = step(state);
-  assert.ok(state.wave >= 2, `expected at least wave 2, got wave ${state.wave}`);
+  for (let i = 0; i < 700 && (state.wave || 0) < 2; i++) state = step(state);
+  assert.ok((state.wave || 0) >= 2, `expected at least wave 2, got wave ${state.wave || 0}`);
 });
 
 test("enemy killed earlier in a tick cannot make a ghost attack", () => {
