@@ -19,6 +19,8 @@ targets:
       path: IronHoldfast/Info.plist
       properties:
         CFBundleDisplayName: Iron Holdfast
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
