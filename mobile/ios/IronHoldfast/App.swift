@@ -16,6 +16,47 @@ struct GameWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         let assets = LocalAssetSchemeHandler()
 
+        private func recordWebStatus(_ status: String) {
+            print("IRON_HOLDFAST_WEB_STATUS:\(status)")
+            guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+                return
+            }
+            let marker = caches.appendingPathComponent("ironholdfast-web-status.txt")
+            try? status.write(to: marker, atomically: true, encoding: .utf8)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript(
+                "document.getElementById('topbar') ? 'topbar' : 'missing-topbar'"
+            ) { [weak self] result, error in
+                if let error {
+                    self?.recordWebStatus("javascript-error:\(error.localizedDescription)")
+                    return
+                }
+                self?.recordWebStatus(String(describing: result ?? "missing-result"))
+            }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFail navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            recordWebStatus("navigation-error:\(error.localizedDescription)")
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFailProvisionalNavigation navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            recordWebStatus("provisional-error:\(error.localizedDescription)")
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            recordWebStatus("web-content-process-terminated")
+        }
+
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
