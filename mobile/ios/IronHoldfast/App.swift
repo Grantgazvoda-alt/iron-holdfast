@@ -54,6 +54,39 @@ struct GameWebView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
 
+        // App Review guideline 5.1.1 requires the privacy policy to be easily
+        // accessible from inside the app. The packaged web client already ships
+        // privacy.html; expose it in the existing command-mode tool belt without
+        // changing the shared web source or relying on the production website.
+        let privacyLinkScript = """
+        (() => {
+          const toolbar = document.getElementById('btnTutorial')?.parentElement;
+          if (!toolbar || document.getElementById('iosPrivacyLink')) return;
+
+          const link = document.createElement('a');
+          link.id = 'iosPrivacyLink';
+          link.href = 'ironholdfast://app/privacy.html';
+          link.className = 'tool';
+          link.textContent = 'Privacy';
+          link.title = 'Privacy Policy';
+          link.setAttribute('aria-label', 'Privacy Policy');
+          link.style.margin = '0';
+          link.style.minWidth = '64px';
+          link.style.textDecoration = 'none';
+          link.style.display = 'inline-flex';
+          link.style.alignItems = 'center';
+          link.style.justifyContent = 'center';
+          toolbar.prepend(link);
+        })();
+        """
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: privacyLinkScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
+
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.isOpaque = false
