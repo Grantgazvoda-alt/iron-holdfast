@@ -14,31 +14,36 @@ struct IronHoldfastApp: App {
 }
 
 private enum RuntimeProbe {
-    static let readyKey = "IronHoldfastWebReady"
-    static let titleKey = "IronHoldfastWebTitle"
-    static let errorKey = "IronHoldfastWebError"
+    static let fileName = "iron-holdfast-runtime.json"
+
+    private static var fileURL: URL? {
+        FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent(fileName, isDirectory: false)
+    }
 
     static func reset() {
-        let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: readyKey)
-        defaults.removeObject(forKey: titleKey)
-        defaults.removeObject(forKey: errorKey)
-        defaults.synchronize()
+        guard let fileURL else { return }
+        try? FileManager.default.removeItem(at: fileURL)
     }
 
     static func markReady(title: String) {
-        let defaults = UserDefaults.standard
-        defaults.set(true, forKey: readyKey)
-        defaults.set(title, forKey: titleKey)
-        defaults.removeObject(forKey: errorKey)
-        defaults.synchronize()
+        write(["ready": true, "title": title, "version": 1])
     }
 
     static func markFailure(_ message: String) {
-        let defaults = UserDefaults.standard
-        defaults.set(false, forKey: readyKey)
-        defaults.set(message, forKey: errorKey)
-        defaults.synchronize()
+        write(["ready": false, "error": message, "version": 1])
+    }
+
+    private static func write(_ value: [String: Any]) {
+        guard let fileURL,
+              JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        else {
+            return
+        }
+        try? data.write(to: fileURL, options: .atomic)
     }
 }
 
