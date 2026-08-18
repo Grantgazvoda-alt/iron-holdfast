@@ -257,7 +257,24 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" "$APP"
           xcrun simctl launch "$UDID" com.ironholdfast.game
-          sleep 5
+          DATA="$(xcrun simctl get_app_container "$UDID" com.ironholdfast.game data)"
+          STATUS="$DATA/Library/Caches/ironholdfast-web-status.txt"
+          for i in $(seq 1 20); do
+            if test -s "$STATUS"; then break; fi
+            sleep 1
+          done
+          if ! test -s "$STATUS"; then
+            echo '::error::Iron Holdfast launched but WKWebView never reported DOM readiness.'
+            xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "IronHoldfast"' || true
+            exit 1
+          fi
+          WEB_STATUS="$(cat "$STATUS")"
+          echo "iOS WebView status: $WEB_STATUS"
+          if test "$WEB_STATUS" != 'topbar'; then
+            echo "::error::Iron Holdfast WKWebView did not render the expected command UI: $WEB_STATUS"
+            xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "IronHoldfast"' || true
+            exit 1
+          fi
           test -d "$(xcrun simctl get_app_container "$UDID" com.ironholdfast.game app)"
           mkdir -p mobile/ios/smoke
           xcrun simctl io "$UDID" screenshot mobile/ios/smoke/launch.png
