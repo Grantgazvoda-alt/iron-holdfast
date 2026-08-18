@@ -16,33 +16,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
-      - name: Verify secure package registry
-        run: curl --fail --silent --show-error --location --connect-timeout 10 --max-time 20 https://socket-firewall.higgsfield.xyz/npm/typescript >/dev/null
-      - name: Install dependencies
-        timeout-minutes: 10
-        run: bun install
-      - name: Test web/server simulation
-        run: bun test
-      - name: Prepare native assets
-        run: bun run mobile:prepare
-      - name: Generate Android project
-        run: npx cap add android
-      - name: Verify target SDK 36
-        run: grep -R "targetSdkVersion = 36\|targetSdkVersion 36" android node_modules/@capacitor/android | head -20
+          java-version: "17"
+      - name: Prepare packaged game assets
+        run: |
+          node --check scripts/prepare-mobile.mjs
+          node scripts/prepare-mobile.mjs
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/client.js
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/battle.js
+      - name: Install Android 16 SDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;35.0.0"
+      - name: Install pinned Gradle 8.13
+        run: |
+          curl --fail --silent --show-error --location https://services.gradle.org/distributions/gradle-8.13-bin.zip -o /tmp/gradle.zip
+          curl --fail --silent --show-error --location https://services.gradle.org/distributions/gradle-8.13-bin.zip.sha256 -o /tmp/gradle.sha256
+          printf '%s  %s\n' "$(cat /tmp/gradle.sha256)" /tmp/gradle.zip | sha256sum -c -
+          unzip -q /tmp/gradle.zip -d /tmp
       - name: Build Android App Bundle
-        working-directory: android
-        run: ./gradlew bundleDebug
+        run: /tmp/gradle-8.13/bin/gradle -p mobile/android :app:bundleDebug --stacktrace
+      - name: Verify Android bundle
+        run: test -s mobile/android/app/build/outputs/bundle/debug/app-debug.aab
       - uses: actions/upload-artifact@v6
         with:
           name: iron-holdfast-android-debug-aab
-          path: android/app/build/outputs/bundle/debug/app-debug.aab
+          path: mobile/android/app/build/outputs/bundle/debug/app-debug.aab
           if-no-files-found: error
 
   ios:
@@ -50,26 +53,50 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - name: Select Xcode 26.6
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-      - name: Verify secure package registry
-        run: curl --fail --silent --show-error --location --connect-timeout 10 --max-time 20 https://socket-firewall.higgsfield.xyz/npm/typescript >/dev/null
-      - name: Install dependencies
-        timeout-minutes: 10
-        run: bun install
-      - name: Prepare native assets
-        run: bun run mobile:prepare
-      - name: Generate iOS project
-        run: npx cap add ios
+      - name: Prepare packaged game assets
+        run: |
+          node --check scripts/prepare-mobile.mjs
+          node scripts/prepare-mobile.mjs
+          rm -rf mobile/ios/IronHoldfast/www
+          cp -R mobile/www mobile/ios/IronHoldfast/www
+      - name: Generate app and store artwork sizes
+        run: |
+          APPICON="mobile/ios/IronHoldfast/Assets.xcassets/AppIcon.appiconset"
+          for size in 20 29 40 58 60 76 80 87 120 152 167 180 1024; do
+            sips -z "$size" "$size" public/favicon.png --out "$APPICON/icon-$size.png" >/dev/null
+          done
+          mkdir -p mobile/store-assets
+          cp "$APPICON/icon-1024.png" mobile/store-assets/apple-app-icon-1024.png
+          sips -z 512 512 public/favicon.png --out mobile/store-assets/google-play-icon-512.png >/dev/null
+          sips --resampleWidth 1024 public/cover.png --out /tmp/google-play-feature.png >/dev/null
+          sips --cropToHeightWidth 500 1024 /tmp/google-play-feature.png --out mobile/store-assets/google-play-feature-1024x500.png >/dev/null
+      - name: Generate Xcode project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cd mobile/ios
+          xcodegen generate
       - name: Build without signing
         run: >-
           xcodebuild
-          -project ios/App/App.xcodeproj
-          -scheme App
+          -project mobile/ios/IronHoldfast.xcodeproj
+          -scheme IronHoldfast
           -sdk iphonesimulator
           -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath mobile/ios/build
           CODE_SIGNING_ALLOWED=NO
           build
+      - name: Verify iOS app bundle
+        run: test -d mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-simulator-app
+          path: mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-store-assets
+          path: mobile/store-assets
+          if-no-files-found: error
