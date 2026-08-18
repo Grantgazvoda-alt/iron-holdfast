@@ -98,7 +98,7 @@ Required before a Google Play production release can be completed:
 4. Store listing, screenshots, 512x512 icon, feature graphic, content rating, target audience, ads declaration, Data Safety, privacy policy and app-access declarations completed.
 5. Signed release AAB targeting Android 16 / API 36.
 6. Internal/closed test smoke test on representative Android devices.
-7. Any testing requirement imposed by the specific Play developer account must be completed before production access.
+7. If the Play Console account is a personal developer account created after November 13, 2023, Google currently requires a closed test with at least 12 opted-in testers for 14 continuous days before the account can apply for production access. Other account types/history may have different production access.
 8. Explicit founder approval immediately before production/store submission.
 9. Submit production release; public availability occurs only after Google accepts/processes the release.
 
