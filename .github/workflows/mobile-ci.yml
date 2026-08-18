@@ -24,14 +24,16 @@ jobs:
           node --check scripts/check-logic.mjs
           node scripts/check-logic.mjs
           node --check scripts/prepare-mobile.mjs
+          node --check public/session.js
           node --check public/client.js
           node --check public/battle.js
-      - name: Run dependency-free gameplay and protocol certification
+      - name: Run dependency-free gameplay, session, and protocol certification
         run: >-
           node --test
           tests/release-certification.test.mjs
           tests/release-regressions.test.mjs
           tests/protocol-certification.mjs
+          tests/session-certification.test.mjs
       - name: Prepare and inspect mobile web package
         env:
           HF_MOBILE_SERVER: https://iron-empire.higgsfield.app
@@ -41,15 +43,24 @@ jobs:
           test -s mobile/www/battle.html
           test -s mobile/www/client.js
           test -s mobile/www/battle.js
+          test -s mobile/www/session.js
           test -s mobile/www/privacy.html
           test -s mobile/www/support.html
           grep -q 'https://iron-empire.higgsfield.app' mobile/www/client.js
           grep -q 'https://iron-empire.higgsfield.app' mobile/www/battle.js
+          grep -q 'from "./session.js"' mobile/www/client.js
+          grep -q 'from "./session.js"' mobile/www/battle.js
+          grep -q 'location.href = `/?room=${encodeURIComponent(room)}`' mobile/www/battle.js
           grep -q 'maximum-scale=1,user-scalable=no,viewport-fit=cover' mobile/www/index.html
           grep -q 'maximum-scale=1,user-scalable=no,viewport-fit=cover' mobile/www/battle.html
           grep -q 'apple-mobile-web-app-capable' mobile/www/index.html
           grep -q 'Iron Holdfast Privacy Policy' mobile/www/privacy.html
           grep -q 'Iron Holdfast Support' mobile/www/support.html
+          if grep -Fq 'get("room") || "main"' mobile/www/client.js mobile/www/battle.js mobile/www/index.html || \
+             grep -Fq "get('room')||'main'" mobile/www/client.js mobile/www/battle.js mobile/www/index.html; then
+            echo 'Legacy global main-room fallback remains in mobile package.' >&2
+            exit 1
+          fi
       - name: Guard against committed signing secrets
         shell: bash
         run: |
@@ -105,6 +116,7 @@ jobs:
           node scripts/prepare-mobile.mjs
           grep -q 'https://iron-empire.higgsfield.app' mobile/www/client.js
           grep -q 'https://iron-empire.higgsfield.app' mobile/www/battle.js
+          test -s mobile/www/session.js
       - name: Install Android 16 SDK and emulator image
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -147,6 +159,8 @@ jobs:
         run: |
           APK='mobile/android/app/build/outputs/apk/debug/app-debug.apk'
           AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          test -x "$ADB"
           if test -e /dev/kvm; then sudo chmod 666 /dev/kvm || true; fi
           echo no | "$AVDMANAGER" create avd --force --name ironholdfast-ci --package 'system-images;android-36;google_apis;x86_64'
           "$ANDROID_HOME/emulator/emulator" \
@@ -156,25 +170,25 @@ jobs:
             -no-snapshot \
             -no-boot-anim \
             -gpu swiftshader_indirect >/tmp/emulator.log 2>&1 &
-          adb wait-for-device
+          "$ADB" wait-for-device
           booted=0
           for i in $(seq 1 60); do
-            if test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = '1'; then
+            if test "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = '1'; then
               booted=1
               break
             fi
             sleep 5
           done
           test "$booted" = '1'
-          adb install -r "$APK"
-          adb shell am start -W -n com.ironholdfast.game/.MainActivity
+          "$ADB" install -r "$APK"
+          "$ADB" shell am start -W -n com.ironholdfast.game/.MainActivity
           sleep 5
-          PID="$(adb shell pidof com.ironholdfast.game | tr -d '\r')"
+          PID="$("$ADB" shell pidof com.ironholdfast.game | tr -d '\r')"
           test -n "$PID"
           mkdir -p mobile/android/smoke
-          adb exec-out screencap -p > mobile/android/smoke/launch.png
+          "$ADB" exec-out screencap -p > mobile/android/smoke/launch.png
           test -s mobile/android/smoke/launch.png
-          if adb logcat -d -t 250 | grep -E 'FATAL EXCEPTION|Process: com\.ironholdfast\.game'; then
+          if "$ADB" logcat -d -t 250 | grep -E 'FATAL EXCEPTION|Process: com\.ironholdfast\.game'; then
             echo 'Android runtime crash detected.' >&2
             exit 1
           fi
@@ -203,6 +217,7 @@ jobs:
           node scripts/prepare-mobile.mjs
           rm -rf mobile/ios/IronHoldfast/www
           cp -R mobile/www mobile/ios/IronHoldfast/www
+          test -s mobile/ios/IronHoldfast/www/session.js
       - name: Generate app and store artwork sizes
         run: |
           APPICON="mobile/ios/IronHoldfast/Assets.xcassets/AppIcon.appiconset"
@@ -247,6 +262,11 @@ jobs:
           mkdir -p mobile/ios/smoke
           xcrun simctl io "$UDID" screenshot mobile/ios/smoke/launch.png
           test -s mobile/ios/smoke/launch.png
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-simulator-smoke
+          path: mobile/ios/smoke/launch.png
+          if-no-files-found: error
       - name: Build device Release without signing
         run: >-
           xcodebuild
@@ -271,13 +291,9 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST")" = '16.0'
           test -s "$APP/www/index.html"
           test -s "$APP/www/battle.html"
+          test -s "$APP/www/session.js"
           test -s "$APP/www/privacy.html"
           test -s "$APP/www/support.html"
-      - uses: actions/upload-artifact@v6
-        with:
-          name: iron-holdfast-ios-simulator-smoke
-          path: mobile/ios/smoke/launch.png
-          if-no-files-found: error
       - uses: actions/upload-artifact@v6
         with:
           name: iron-holdfast-ios-simulator-app
