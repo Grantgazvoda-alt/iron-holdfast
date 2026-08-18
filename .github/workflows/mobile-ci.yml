@@ -124,13 +124,12 @@ jobs:
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
           "$SDKMANAGER" \
-            'cmdline-tools;22.0' \
             'platforms;android-36' \
             'build-tools;35.0.0' \
             'platform-tools' \
             'emulator' \
             'system-images;android-36;google_apis;x86_64'
-          test -x "$ANDROID_HOME/cmdline-tools/22.0/bin/avdmanager"
+          test -d "$ANDROID_HOME/system-images/android-36/google_apis/x86_64"
       - name: Install pinned Gradle 8.13
         run: |
           curl --fail --silent --show-error --location https://services.gradle.org/distributions/gradle-8.13-bin.zip -o /tmp/gradle.zip
@@ -161,22 +160,72 @@ jobs:
         shell: bash
         run: |
           APK='mobile/android/app/build/outputs/apk/debug/app-debug.apk'
-          AVDMANAGER="$ANDROID_HOME/cmdline-tools/22.0/bin/avdmanager"
           ADB="$ANDROID_HOME/platform-tools/adb"
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          AVD_ROOT="$HOME/.android/avd"
+          AVD_DIR="$AVD_ROOT/ironholdfast-ci.avd"
           test -x "$ADB"
+          test -x "$EMULATOR"
+          test -d "$ANDROID_HOME/system-images/android-36/google_apis/x86_64"
           "$ADB" kill-server || true
           "$ADB" start-server
           "$ADB" devices -l
           if test -e /dev/kvm; then sudo chmod 666 /dev/kvm || true; fi
-          mkdir -p "$HOME/.android/avd"
-          "$AVDMANAGER" --verbose create avd \
-            -n ironholdfast-ci \
-            -k 'system-images;android-36;google_apis;x86_64' \
-            -d pixel_6 \
-            -f
-          "$ANDROID_HOME/emulator/emulator" -list-avds
-          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fxq ironholdfast-ci
-          "$ANDROID_HOME/emulator/emulator" \
+          rm -rf "$AVD_DIR" "$AVD_ROOT/ironholdfast-ci.ini"
+          mkdir -p "$AVD_DIR"
+          cat > "$AVD_ROOT/ironholdfast-ci.ini" <<EOF
+          avd.ini.encoding=UTF-8
+          path=$AVD_DIR
+          path.rel=avd/ironholdfast-ci.avd
+          target=android-36
+          EOF
+          cat > "$AVD_DIR/config.ini" <<'EOF'
+          AvdId=ironholdfast-ci
+          PlayStore.enabled=false
+          abi.type=x86_64
+          avd.ini.displayname=Iron Holdfast CI
+          avd.ini.encoding=UTF-8
+          disk.dataPartition.size=2G
+          fastboot.forceChosenSnapshotBoot=no
+          fastboot.forceColdBoot=yes
+          fastboot.forceFastBoot=no
+          hw.accelerometer=yes
+          hw.arc=false
+          hw.audioInput=no
+          hw.battery=yes
+          hw.camera.back=none
+          hw.camera.front=none
+          hw.cpu.arch=x86_64
+          hw.cpu.ncore=2
+          hw.dPad=no
+          hw.gps=yes
+          hw.gpu.enabled=yes
+          hw.gpu.mode=auto
+          hw.initialOrientation=Portrait
+          hw.keyboard=yes
+          hw.lcd.density=420
+          hw.lcd.height=2400
+          hw.lcd.width=1080
+          hw.mainKeys=no
+          hw.ramSize=2048
+          hw.sdCard=no
+          hw.sensors.orientation=yes
+          hw.sensors.proximity=yes
+          hw.trackBall=no
+          image.sysdir.1=system-images/android-36/google_apis/x86_64/
+          runtime.network.latency=none
+          runtime.network.speed=full
+          showDeviceFrame=no
+          tag.display=Google APIs
+          tag.id=google_apis
+          vm.heapSize=256
+          EOF
+          echo 'Configured AVD metadata:'
+          cat "$AVD_ROOT/ironholdfast-ci.ini"
+          grep -E '^(AvdId|abi.type|image.sysdir.1|hw.cpu.arch|hw.ramSize)=' "$AVD_DIR/config.ini"
+          "$EMULATOR" -list-avds
+          "$EMULATOR" -list-avds | grep -Fxq ironholdfast-ci
+          "$EMULATOR" \
             -avd ironholdfast-ci \
             -no-window \
             -no-audio \
