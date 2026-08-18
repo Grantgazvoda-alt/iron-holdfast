@@ -8,6 +8,8 @@ Fixed 0.5s deterministic server ticks — the simulation (`src/logic.js`) stays 
 
 ## Play
 
+![Building sprite art pass](docs/building-art.png)
+
 Open the deployed URL, or run locally:
 
 ```bash
