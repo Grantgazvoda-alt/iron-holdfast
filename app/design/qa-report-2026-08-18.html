@@ -239,7 +239,7 @@
     <div class="body">
       <h4>Key findings</h4>
       <ul class="exec-list">
-        <li><b>F-001 (High · visual):</b> floating grey stone-shaped terrain artifacts in the map's top-left degrade the "realistic" presentation — cosmetic, no gameplay impact. Likely already fixed in the pending <code>a5fa1e1</code> art pass.</li>
+        <li><b>F-001 (High · visual):</b> floating grey stone artifacts — root cause found (decals overran the 64px tile) and <b>FIXED</b> (<code>0e25153</code>/<code>49b70dc</code>); pending visual retest once the fixed build deploys live.</li>
         <li><b>F-002 (Resolved):</b> the in-browser frozen clock was a test-harness artifact, not a game defect — server sim ticks, builds, and pauses cleanly on raw protocol probes.</li>
         <li><b>F-003 (Tooling):</b> the shared test browser occasionally drifted to third-party pages, making in-browser timing unreliable; use protocol probes for timing assertions.</li>
       </ul>
@@ -304,7 +304,7 @@
         <li>Pan/zoom to the top-left corner (north-west of the keep)</li>
         <li>Observe the grey “stone quarry-like” textures floating over trees/grass</li>
       </ol>
-      <div class="status-banner warn"><b>Status / verification:</b> Confirmed via vision analysis of a live screenshot. The pending <code>a5fa1e1</code> art pass rewrote the entire terrain painter (<code>paintTerrain</code> with value-noise dappling, explicit rock outcrop/vein layer, forest canopy) — likely already fixed in the pending build, which is <b>not yet live</b>. <b>Retest on the new build is mandatory before closing (see §8).</b></div>
+      <div class="status-banner good"><b>Status: FIXED (2026-08-18)</b> — committed as <code>0e25153</code> (project), <code>49b70dc</code> (GitHub <code>iron-holdfast</code>), <code>e4a012f</code> (GitHub <code>iron-holdfast-source</code>). Root cause: painter decals exceeded the 64px tile boundary (outcrops to x 71px, boulders to 68px), bleeding grey stone onto adjacent tiles. Fix: rock outcrops, ore veins, and gold nuggets now spawn strictly in-tile (≤ 62px). <b>Pending: visual retest once the fixed build is deployed live.</b></div>
     </div>
   </div>
 
