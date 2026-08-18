@@ -1,6 +1,9 @@
 name: iOS App Store CI
 
 on:
+  push:
+    branches:
+      - "feature/ios-app-store-release"
   pull_request:
     paths:
       - "mobile/ios/**"
@@ -52,7 +55,7 @@ jobs:
         shell: bash
         run: |
           if grep -R -n -E --exclude='*.md' --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' --exclude='*.webp' \
-            'BEGIN (RSA |EC |OPENSSH |)?PRIVATE KEY|BEGIN CERTIFICATE|APP_STORE_CONNECT_PRIVATE_KEY|MATCH_PASSWORD|APPLE_ID_PASSWORD' \
+            'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|BEGIN CERTIFICATE|APP_STORE_CONNECT_PRIVATE_KEY|MATCH_PASSWORD|APPLE_ID_PASSWORD' \
             mobile/ios scripts public; then
             echo 'Potential Apple signing credential material found in release sources.' >&2
             exit 1
