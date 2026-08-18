@@ -61,7 +61,7 @@ The store release intentionally does **not** depend on Capacitor or other new np
 - Packaged game files are served through the private custom scheme `ironholdfast://app` by `WKURLSchemeHandler`.
 - No App Transport Security exception is added for the production backend.
 - Xcode project is generated reproducibly from `mobile/ios/project.yml` with XcodeGen.
-- CI selects Xcode `26.6` and builds against the installed iOS 26 SDK family.
+- CI selects Xcode `26.3` and builds against the installed iOS 26 SDK family.
 - App source: `mobile/ios/`.
 
 ### Asset preparation
@@ -77,7 +77,7 @@ Generated native copies and build output are intentionally ignored by Git. Store
 
 ### Android — PASS
 
-On commit `2cff2bdda0eaed877efb52009d1ae3093c28dac4`, GitHub Mobile CI successfully completed:
+On the current mobile-release branch, GitHub Mobile CI successfully completed:
 
 1. packaged-game asset preparation;
 2. Android 16 / API 36 SDK setup;
@@ -86,11 +86,27 @@ On commit `2cff2bdda0eaed877efb52009d1ae3093c28dac4`, GitHub Mobile CI successfu
 5. AAB existence verification; and
 6. artifact upload.
 
-The produced `app-debug.aab` is a **debug/test artifact**, not a Play-release-signed production bundle.
+The produced `iron-holdfast-android-debug-aab` is a **debug/test artifact**, not a Play-release-signed production bundle.
 
-### iOS — source ready, CI pending
+### iOS — PASS (unsigned simulator validation)
 
-The dependency-light SwiftUI/WKWebView source is committed. The newest macOS validation job is currently queued behind obsolete earlier macOS workflow jobs created before the native-shell pivot. Do not claim iOS compile success until the current native job actually completes successfully.
+On commit `e61c9b71d5ad07ccd0100134529b05f5ad184b46`, GitHub Mobile CI run `32121171683` successfully completed the `iOS 26 / simulator build` job using Xcode `26.3`.
+
+Verified steps:
+
+1. packaged-game asset preparation;
+2. App Store and launcher artwork generation;
+3. Xcode project generation through XcodeGen;
+4. unsigned iOS Simulator compilation;
+5. `.app` bundle existence verification; and
+6. artifact upload.
+
+Artifacts produced by the successful run:
+
+- `iron-holdfast-ios-simulator-app`
+- `iron-holdfast-store-assets`
+
+This proves the native shell and packaged game compile successfully against the current iOS 26 SDK family. It does **not** prove distribution signing, physical-device behavior, TestFlight acceptance, or App Store review acceptance.
 
 ### Secure npm registry finding
 
@@ -100,23 +116,29 @@ GitHub-hosted runners timed out connecting to `socket-firewall.higgsfield.xyz:44
 
 - Android: Android 16 / API level 36 target.
 - iOS/iPadOS: Xcode 26+ with iOS/iPadOS 26 SDK or later for App Store submission.
-- GitHub mobile CI selects Xcode 26.6 for iOS validation.
+- GitHub mobile CI currently validates with Xcode 26.3.
+
+As of August 18, 2026, Apple's published submission requirements state that apps uploaded to App Store Connect must be built with Xcode 26 or later using an iOS/iPadOS 26 SDK or later.
+
+## App Store review posture
+
+The iOS release packages the actual game client inside the app bundle; it is not a bookmark or remote web clipping. The authoritative multiplayer/game simulation remains server-side. For App Review, preserve the complete playable game experience and describe that architecture accurately in Review Notes. Apple can reject apps that do not provide sufficient lasting entertainment value or that amount to a repackaged website, so release QA must confirm the native package behaves as a full game on iPhone and iPad.
 
 ## Content-rating facts to enter truthfully
 
-Do not preselect a rating without completing each store's current questionnaire. Current game content includes stylized medieval combat and siege warfare. The current release does **not** include graphic gore, gambling, chat, social profiles, advertising, or user-generated content.
+Do not preselect a rating without completing Apple's current questionnaire. Current game content includes stylized medieval combat and siege warfare with weapons. The current release does **not** include graphic gore, gambling, chat, social profiles, advertising, or user-generated content. Record the actual frequency and intensity of violence shown in the submitted build.
 
 ## Privacy/Data Safety facts to verify in store forms
 
 Current code creates a random local player identifier and transmits it with room/gameplay messages to the authoritative server. Gameplay state/commands are transmitted for app functionality. Hosting/security infrastructure may process IP addresses and diagnostic request/connection logs. The current release has no third-party advertising SDK, analytics SDK, account-profile system, or in-app purchase code.
 
-Before final submission, reconcile these facts with the actual production hosting/log-retention configuration and answer Apple App Privacy / Google Play Data Safety forms accordingly. Do not claim "no data collected" merely because there is no account system.
+Before final submission, reconcile these facts with the actual production hosting/log-retention configuration and answer Apple App Privacy / Google Play Data Safety forms accordingly. Apple requires applicable data collected through web views to be included in the App Privacy disclosures. Do not claim "no data collected" merely because there is no account system.
 
 ## Apple release gate
 
 Required before an App Store upload can be completed:
 
-1. Active Apple Developer Program membership and App Store Connect access.
+1. Active Apple Developer Program membership and App Store Connect access. **Founder reports the membership is active; App Store Connect access still needs to be verified in the account.**
 2. Final bundle ID registered to the developer team.
 3. Distribution signing certificate/provisioning handled through Xcode or encrypted CI/store secrets.
 4. App record, age rating, App Privacy answers, screenshots, production-quality 1024x1024 app icon, support/privacy URLs, pricing/availability and review contact completed.
