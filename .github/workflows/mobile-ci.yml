@@ -23,7 +23,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+      - name: Verify secure package registry
+        run: curl --fail --silent --show-error --location --connect-timeout 10 --max-time 20 https://socket-firewall.higgsfield.xyz/npm/typescript >/dev/null
       - name: Install dependencies
+        timeout-minutes: 10
         run: bun install
       - name: Test web/server simulation
         run: bun test
@@ -52,7 +55,10 @@ jobs:
           bun-version: latest
       - name: Select Xcode 26.6
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Verify secure package registry
+        run: curl --fail --silent --show-error --location --connect-timeout 10 --max-time 20 https://socket-firewall.higgsfield.xyz/npm/typescript >/dev/null
       - name: Install dependencies
+        timeout-minutes: 10
         run: bun install
       - name: Prepare native assets
         run: bun run mobile:prepare
