@@ -58,6 +58,143 @@ function rngFrom(seed) {
   };
 }
 
+// ── open world (slice 1): overworld with roaming armies, supply & travel ──
+// deterministic: all randomness comes from the seeded rng already in state.
+
+const WWX = 24; // overworld width
+const WWY = 16; // overworld height
+const WT_PLAIN = 0;
+const WT_FOREST = 1;
+const WT_HILL = 2;
+const WT_MOUNTAIN = 3;
+const WT_RIVER = 4;
+
+function wxy(x, y) {
+  return y * WWX + x;
+}
+
+function genWorld(rng) {
+  const cells = new Array(WWX * WWY).fill(WT_PLAIN);
+  const nBlobs = 14;
+  for (let n = 0; n < nBlobs; n++) {
+    const cx = 1 + Math.floor(rng() * (WWX - 2));
+    const cy = 1 + Math.floor(rng() * (WWY - 2));
+    const rr = 1 + Math.floor(rng() * 2);
+    const t = rng() < 0.5 ? WT_FOREST : rng() < 0.5 ? WT_HILL : WT_MOUNTAIN;
+    for (let y = cy - rr; y <= cy + rr; y++)
+      for (let x = cx - rr; x <= cx + rr; x++)
+        if (x > 0 && y > 0 && x < WWX - 1 && y < WWY - 1 && rng() < 0.8) cells[wxy(x, y)] = t;
+  }
+  const ry = Math.floor(WWY / 2) + (rng() < 0.5 ? 1 : -1);
+  for (let x = 0; x < WWX; x++) cells[wxy(x, ry)] = WT_RIVER;
+  const towns = [];
+  const names = ["Alderford", "Bramhall", "Casterly", "Dunmoor", "Erith", "Fordkeep", "Greenvale", "Hollowgate", "Ironmere", "Keyford"];
+  for (let i = 0; i < 6; i++) {
+    let x = 1 + Math.floor(rng() * (WWX - 2));
+    let y = 1 + Math.floor(rng() * (WWY - 2));
+    for (let k = 0; k < 60 && cells[wxy(x, y)] !== WT_PLAIN; k++) {
+      x = 1 + Math.floor(rng() * (WWX - 2));
+      y = 1 + Math.floor(rng() * (WWY - 2));
+    }
+    if (cells[wxy(x, y)] === WT_PLAIN && !towns.some((t) => Math.abs(t.x - x) + Math.abs(t.y - y) < 4)) {
+      towns.push({ i, name: names[i % names.length], x, y, faction: i === 0 ? 0 : 1 + ((i - 1) % 2), troops: 12 + Math.floor(rng() * 12) });
+    }
+  }
+  return { W: WWX, H: WWY, cells, towns, day: 0 };
+}
+
+// cost-weighted BFS from (sx,sy) to (tx,ty); returns [[x,y],...] steps or null
+function worldPath(w, sx, sy, tx, ty) {
+  if (sx === tx && sy === ty) return [];
+  const INF = 1e9;
+  const dist = new Array(w.cells.length).fill(INF);
+  const prev = new Array(w.cells.length).fill(-1);
+  dist[wxy(sx, sy)] = 0;
+  const q = [wxy(sx, sy)];
+  let qi = 0;
+  while (qi < q.length) {
+    const c = q[qi++];
+    const x = c % w.W;
+    const y = (c - x) / w.W;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.H) continue;
+      const nc = wxy(nx, ny);
+      if (w.cells[nc] === WT_MOUNTAIN) continue;
+      const wCost = w.cells[nc] === WT_FOREST || w.cells[nc] === WT_HILL ? 2 : 1;
+      if (dist[c] + wCost < dist[nc]) {
+        dist[nc] = dist[c] + wCost;
+        prev[nc] = c;
+        q.push(nc);
+      }
+    }
+  }
+  const tc = wxy(tx, ty);
+  if (dist[tc] >= INF) return null;
+  const path = [];
+  let c = tc;
+  while (c !== -1 && c !== wxy(sx, sy)) {
+    path.unshift([c % w.W, (c - (c % w.W)) / w.W]);
+    c = prev[c];
+  }
+  return path;
+}
+
+// advance the army one step along its path; consume supply; desert if starved
+function stepWorld(s) {
+  const w = s.world;
+  if (!w) return;
+  // player army movement
+  if (w.army.path && w.army.path.length) {
+    w.army.wait = (w.army.wait || 0) + 1;
+    const tc = w.cells[wxy(w.army.path[0][0], w.army.path[0][1])];
+    if (w.army.wait >= (tc === WT_FOREST || tc === WT_HILL ? 2 : 1)) {
+      w.army.wait = 0;
+      const [nx, ny] = w.army.path.shift();
+      w.army.x = nx;
+      w.army.y = ny;
+      if (!w.army.path.length) {
+        w.army.path = null;
+        pushEvent(s, "world", "Your army has reached its destination.");
+      }
+    }
+  }
+  // supply: each troop eats per day (~40 world ticks = 1 day)
+  w.dayAcc = (w.dayAcc || 0) + 1;
+  if (w.dayAcc % 40 === 0) {
+    w.day++;
+    const needy = w.army.troops || 0;
+    if (needy > 0) {
+      if (w.army.supply >= needy) {
+        w.army.supply -= needy;
+      } else {
+        w.army.supply = 0;
+        const lose = Math.max(1, Math.floor(w.army.troops * 0.2));
+        w.army.troops = Math.max(0, w.army.troops - lose);
+        pushEvent(s, "supply", `Your army starves — ${lose} troops desert.`);
+      }
+    }
+  }
+  // rival lords wander deterministically toward towns
+  for (const lord of w.lords) {
+    lord.tick = (lord.tick || 0) + 1;
+    if (!lord.path || !lord.path.length) {
+      if (lord.tick % 60 === 0) {
+        const t = w.towns[((lord.tick / 60) | 0) % w.towns.length];
+        lord.path = worldPath(w, lord.x, lord.y, t.x, t.y);
+      }
+    } else {
+      lord.wait = (lord.wait || 0) + 1;
+      if (lord.wait >= 2) {
+        lord.wait = 0;
+        const [nx, ny] = lord.path.shift();
+        lord.x = nx;
+        lord.y = ny;
+      }
+    }
+  }
+}
+
 // ── map generation (seeded, deterministic) ────────────────────────────────
 
 function xy(x, y) {
@@ -233,6 +370,15 @@ export function setup(players) {
   const rng = rngFrom(seed ^ 0x51ab3d);
   const { map, kx, ky, campX, campY } = genMap(rng);
 
+  // open world (slice 1): separate RNG stream so the siege map stays identical
+  const wrng = rngFrom(seed ^ 0x9e3779b9);
+  const world = genWorld(wrng);
+  world.army = { x: world.towns[0] ? world.towns[0].x : 4, y: world.towns[0] ? world.towns[0].y : 4, troops: 10, supply: 40, path: null, wait: 0 };
+  world.lords = [
+    { id: 1, name: "Lord Roderick", x: 6, y: 6, troops: 18, supply: 30, path: null, tick: 0, wait: 0 },
+    { id: 2, name: "Lady Isolde", x: 17, y: 9, troops: 22, supply: 26, path: null, tick: 0, wait: 0 },
+  ];
+
   const s = {
     v: 1,
     seat,
@@ -242,6 +388,7 @@ export function setup(players) {
     ky,
     campX,
     campY,
+    world,
     rng: seed ^ 0x51ab3d,
     keep: { hp: 400, max: 400 },
     camp: { hp: 600, max: 600, nextWave: 120, wave: 0 },
@@ -350,6 +497,23 @@ export function validateAction(state, playerId, action) {
       }
       return { ok: true };
     }
+    case "world_march": {
+      if (!state.world) return { ok: false, error: "no world" };
+      const nx = Number.isInteger(action.x) ? action.x : -1;
+      const ny = Number.isInteger(action.y) ? action.y : -1;
+      if (nx < 0 || ny < 0 || nx >= state.world.W || ny >= state.world.H) return { ok: false, error: "out of bounds" };
+      if (state.world.cells[ny * state.world.W + nx] === WT_MOUNTAIN) return { ok: false, error: "impassable terrain" };
+      return { ok: true };
+    }
+    case "world_resupply": {
+      if (!state.world) return { ok: false, error: "no world" };
+      const w = state.world;
+      if (w.army.supply >= 200) return { ok: false, error: "already supplied" };
+      if (!w.towns.some((t) => t.x === w.army.x && t.y === w.army.y && t.faction === 0)) {
+        return { ok: false, error: "no friendly town here" };
+      }
+      return { ok: true };
+    }
     case "research": {
       const tech = TECHS.find((t) => t.id === action.tech);
       if (!tech) return { ok: false, error: "unknown tech" };
@@ -406,6 +570,27 @@ function adjacentTerrain(s, x, y, t) {
 
 export function applyAction(state, playerId, action) {
   switch (action.type) {
+    case "world_march": {
+      const w = state.world;
+      const nx = Number.isInteger(action.x) ? action.x : -1;
+      const ny = Number.isInteger(action.y) ? action.y : -1;
+      if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.H) return state;
+      const path = worldPath(w, w.army.x, w.army.y, nx, ny);
+      if (!path) return state;
+      const world = { ...w, army: { ...w.army, path, wait: 0 } };
+      return { ...state, world };
+    }
+    case "world_resupply": {
+      const w = state.world;
+      const owner = w.towns.some((t) => t.x === w.army.x && t.y === w.army.y && t.faction === 0);
+      if (!owner) return state;
+      const cost = Math.min(20, 200 - w.army.supply);
+      if (w.army.supply >= 200) return state;
+      const world = { ...w, army: { ...w.army, supply: Math.min(200, w.army.supply + cost) } };
+      const s = { ...state, world };
+      pushEvent(s, "world", "Your army resupplies at the town.");
+      return s;
+    }
     case "build": {
       const def = BUILDINGS[action.b];
       const res = { ...state.res };
@@ -572,6 +757,7 @@ export function tick(state) {
   s = stepUnits(s);
   s = stepTowers(s);
   s = stepWaves(s);
+  stepWorld(s);
 
   // win/lose checks
   let over = false;
@@ -1101,5 +1287,16 @@ export function viewFor(state, playerId) {
     result: state.result || null,
     kills: state.kills || 0,
     lost: state.lost || 0,
+    world: state.world
+      ? {
+          W: state.world.W,
+          H: state.world.H,
+          cells: state.world.cells,
+          towns: state.world.towns.map((t) => ({ name: t.name, x: t.x, y: t.y, faction: t.faction, troops: t.troops })),
+          army: { x: state.world.army.x, y: state.world.army.y, troops: state.world.army.troops, supply: state.world.army.supply, moving: Boolean(state.world.army.path && state.world.army.path.length) },
+          lords: state.world.lords.map((l) => ({ name: l.name, x: l.x, y: l.y, troops: l.troops })),
+          day: state.world.day || 0,
+        }
+      : null,
   };
 }
