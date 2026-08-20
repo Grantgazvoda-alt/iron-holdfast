@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Iron Holdfast — castle siege builder</title>
+    <meta property="og:title" content="Iron Holdfast" />
+    <meta property="og:description" content="A real-time medieval siege builder: grow a castle economy, raise walls and towers, train a garrison, and destroy the enemy camp before its waves crush you." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://iron-empire.higgsfield.app/" />
+    <meta property="og:image" content="https://iron-empire.higgsfield.app/cover.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://iron-empire.higgsfield.app/cover.png" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <style>
+      :root {
+        --parchment: #e8d9b8;
+        --wood: #4a3524;
+        --wood-dark: #33251a;
+        --azure: #2f6fd0;
+        --oxblood: #a3342f;
+        --gold: #d9a441;
+        --ink: #2b2118;
+        --paper: #f4e8cf;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #1a140e; color: var(--ink); }
+      body { font: 15px/1.35 Georgia, "Times New Roman", serif; }
+      #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+      /* top bar */
+      #topbar {
+        height: 52px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+        padding: 0 14px; background: linear-gradient(#3b2b1c, #241a10);
+        color: var(--parchment); border-bottom: 3px solid var(--gold);
+        position: relative; z-index: 5; user-select: none;
+      }
+      #title { font-size: 17px; letter-spacing: 2px; color: var(--gold); font-weight: bold; text-transform: uppercase; }
+      #title small { display: block; font-size: 9px; letter-spacing: 4px; color: #b09b76; font-weight: normal; }
+      .chip { display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,.35); border: 1px solid rgba(217,164,65,.35); border-radius: 8px; padding: 4px 9px; font-size: 13px; }
+      .chip b { font-variant-numeric: tabular-nums; }
+      .chip .lbl { font-size: 10px; color: #c9b67e; letter-spacing: 1px; }
+      #hud { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .barwrap { width: 150px; height: 14px; background: #120c08; border: 1px solid #6b4f2a; border-radius: 7px; overflow: hidden; }
+      .barwrap span { display: block; height: 100%; border-radius: 6px; transition: width .3s; }
+      #keepbar span { background: linear-gradient(#3f7ad6, #22487f); }
+      #campbar span { background: linear-gradient(#c84b42, #7a231e); }
+      .barlbl { font-size: 9px; position: absolute; }
+      #timebox { margin-left: auto; font-size: 12px; color: #c9b67e; }
+      #btnPause, #btnMute, #btnReset { cursor: pointer; border: 1px solid var(--gold); background: rgba(0,0,0,.35); color: var(--parchment); border-radius: 8px; padding: 6px 10px; font: 13px Georgia, serif; }
+      #btnPause:hover, #btnMute:hover, #btnReset:hover { background: var(--gold); color: #241a0c; }
+
+      /* canvas */
+      #stage { position: relative; flex: 1 1 auto; overflow: hidden; }
+      #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+      #hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(20,14,8,.85); color: var(--parchment); padding: 7px 14px; border-radius: 20px; font-size: 12px; border: 1px solid rgba(217,164,65,.5); pointer-events: none; }
+      #unpaidTag { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(120,20,10,.92); color: #ffe0d0; padding: 7px 16px; border-radius: 20px; font-size: 13px; border: 1px solid #ff8a6a; display: none; z-index: 4; }
+      #minimap { position: absolute; right: 14px; bottom: 14px; width: 150px; height: 100px; border: 2px solid #6b4f2a; border-radius: 8px; background: rgba(20,14,8,.75); z-index: 3; overflow: hidden; cursor: pointer; }
+      #minimap canvas { width: 100%; height: 100%; display: block; }
+      /* tutorial overlay */
+      #tutorial { position: fixed; inset: 0; background: rgba(8,5,2,.86); z-index: 40; display: none; align-items: center; justify-content: center; }
+      #tutorial.show { display: flex; }
+      #tCard { background: linear-gradient(#2a1f12, #17110a); border: 2px solid var(--gold); border-radius: 14px; padding: 26px 30px; max-width: 460px; width: calc(100% - 40px); color: var(--parchment); box-shadow: 0 0 60px rgba(0,0,0,.8); }
+      #tCard h2 { margin: 0 0 10px; color: var(--gold); font-size: 21px; letter-spacing: 1px; }
+      #tCard p { margin: 0 0 14px; font-size: 14.5px; line-height: 1.55; color: #e6d9b4; }
+      #tCard .keys { color: #c9b67e; font-size: 12.5px; margin-bottom: 16px; }
+      #tStep { display: block; font-size: 11px; letter-spacing: 2px; color: #8d7b54; margin-bottom: 10px; }
+      #tBtns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+      #tBtns button { font: 13px Georgia, serif; padding: 8px 16px; border-radius: 8px; cursor: pointer; border: 1px solid var(--gold); background: transparent; color: var(--parchment); }
+      #tBtns button.primary { background: var(--gold); color: #241a0c; border-color: var(--gold); }
+      #tBtns button:hover { filter: brightness(1.15); }
+      .t-highlight { outline: 3px solid #ffd75e !important; outline-offset: 3px; box-shadow: 0 0 18px rgba(255,215,94,.8); animation: tPulse 1s ease-in-out infinite; }
+      @keyframes tPulse { 0%,100% { outline-color: #ffd75e; } 50% { outline-color: #fff3c4; } }
+      @media (max-width: 700px) {
+        #hint { display: none; }
+        .tool { min-width: 60px; padding: 4px 5px 5px; }
+        .tool .nm { font-size: 9.5px; }
+        .tool .ct { font-size: 8.5px; }
+        #topbar { gap: 5px; }
+        #belt { gap: 6px; }
+      }
+      .evt { background: rgba(20,14,8,.82); border-left: 3px solid var(--gold); color: var(--parchment); padding: 7px 11px; font-size: 13px; border-radius: 0 8px 8px 0; animation: evtIn .25s ease, evtOut .4s ease 6s forwards; }
+      .evt.danger { border-left-color: var(--oxblood); color: #ffd9d4; }
+      .evt.train { border-left-color: var(--azure); }
+      .evt.end { border-left-color: #fff; background: rgba(20,10,4,.95); font-weight: bold; }
+      @keyframes evtIn { from { transform: translateX(-14px); opacity: 0 } }
+      @keyframes evtOut { to { opacity: 0; transform: translateY(-6px) } }
+
+      /* toolbelt */
+      #belt {
+        flex: 0 0 auto; background: linear-gradient(#2e2116, #1c130c); border-top: 3px solid #6b4f2a;
+        padding: 8px 10px; display: flex; gap: 10px; align-items: center; overflow-x: auto; user-select: none;
+      }
+      #belt .group { display: flex; gap: 6px; align-items: center; padding-right: 10px; border-right: 1px solid rgba(217,164,65,.3); }
+      #belt .group:last-child { border-right: 0; }
+      .tool {
+        min-width: 74px; text-align: center; cursor: pointer; background: rgba(0,0,0,.3);
+        border: 1px solid #6b4f2a; border-radius: 9px; padding: 5px 7px 6px; color: var(--parchment);
+      }
+      .tool:hover { border-color: var(--gold); }
+      .tool.active { border-color: var(--azure); background: rgba(47,111,208,.25); }
+      .tool.unit { border-color: #3d6b3a; }
+      .tool.unit:hover { border-color: #7ed06f; }
+      .tool.tech { border-color: #5a4a7a; }
+      .tool.tech:hover { border-color: #9a7ad0; }
+      .tool.done { border-color: #3fad3f; color: #c9f0c0; }
+      .tool.done .ct { color: #2ed05a; }
+      .tool .ic { display: block; height: 22px; line-height: 22px; font-size: 17px; }
+      .tool .nm { display: block; font-size: 11px; letter-spacing: .5px; }
+      .tool .ct { display: block; font-size: 10px; color: #c9b67e; min-height: 13px; }
+      .tool.afford { color: #eaf4e6; }
+      .tool.broke { opacity: .45; pointer-events: none; }
+      .grpname { font-size: 10px; letter-spacing: 2px; color: #8d7b54; writing-mode: vertical-rl; transform: rotate(180deg); }
+
+      /* hint + overlay */
+      #overlay { position: fixed; inset: 0; background: rgba(10,6,2,.82); display: none; align-items: center; justify-content: center; z-index: 20; }
+      #overlay.show { display: flex; }
+      #card { background: linear-gradient(#241a10, #14100a); border: 2px solid var(--gold); border-radius: 14px; padding: 30px 44px; text-align: center; color: var(--parchment); max-width: 520px; }
+      #card h1 { margin: 0 0 8px; letter-spacing: 4px; color: var(--gold); font-size: 30px; }
+      #card p { color: #d8c9a2; font-size: 15px; }
+      #card button { margin-top: 12px; font: 15px Georgia, serif; background: var(--gold); color: #241a0c; border: 0; border-radius: 9px; padding: 10px 22px; cursor: pointer; }
+      #card button:hover { background: #f2c26b; }
+      @media (max-width: 900px) {
+        #hud { gap: 5px; } .bar { width: 90px; } #topbar { flex-wrap: wrap; height: auto; padding: 6px 8px; gap: 6px; }
+        .chip { font-size: 11px; padding: 4px 6px; } #titlebar { font-size: 14px; }
+        #timebox { display: none; } .evt { font-size: 12px; max-width: 80vw; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="topbar">
+        <div id="titlebar">IRON HOLDFAST <small>CASTLE • SIEGE • SURVIVAL</small></div>
+        <div id="hud">
+          <div class="chip"><span class="lbl">🌲 Wood</span><b id="resWood">0</b></div>
+          <div class="chip"><span class="lbl">⛰ Stone</span><b id="resStone">0</b></div>
+          <div class="chip"><span class="lbl">⚙ Iron</span><b id="resIron">0</b></div>
+          <div class="chip"><span class="lbl">🪙 Gold</span><b id="resGold">0</b></div>
+          <div class="chip"><span class="lbl">🌾 Food</span><b id="resFood">0</b></div>
+          <div class="chip"><span class="lbl">👥 Pop</span><b id="resPop">0/0</b></div>
+          <div class="chip" style="flex-direction:column;align-items:stretch;gap:3px;">
+            <span class="lbl">🏰 Keep</span>
+            <div class="barwrap"><span id="keepBar" style="width:100%"></span></div>
+          </div>
+          <div class="chip" style="flex-direction:column;align-items:stretch;gap:3px;">
+            <span class="lbl">🔥 Enemy camp</span>
+            <div class="barwrap"><span id="campBar" style="width:100%"></span></div>
+          </div>
+        </div>
+        <div id="topbox2">
+          <div class="chip"><span class="lbl">Wave</span><b id="resWave">0</b></div>
+          <div class="chip"><span class="lbl">Next</span><b id="resNext">—</b></div>
+        </div>
+        <div id="timebox"><span id="clock">0:00</span></div>
+        <button id="btnReset">⟳ New run</button>
+      </div>
+      <div id="stage">
+        <canvas id="canvas"></canvas>
+        <div id="events"></div>
+        <div id="unpaidTag">⚒ The treasury is empty — the garrison fights half-hearted</div>
+        <div id="minimap"><canvas id="mmCanvas"></canvas></div>
+        <div id="hint">Click a building to place · select a soldier, then: click empty ground = march · click an enemy = charge · X = hold · H keep · C camp · P pause</div>
+      </div>
+      <div id="belt">
+        <div class="group">
+          <div class="grpname">BUILD</div>
+          <div class="tool" data-b="house" title="+4 population"><span class="ic">🏠</span><span class="nm">House</span><span class="ct">12 wood</span></div>
+          <div class="tool" data-b="farm" title="food"><span class="ic">🌾</span><span class="nm">Farm</span><span class="ct">10 wood</span></div>
+          <div class="tool" data-b="woodcutter" title="+4 wood / 12t"><span class="ic">🪓</span><span class="nm">Lumber</span><span class="ct">8 wood</span></div>
+          <div class="tool" data-b="quarry" title="+4 stone / 18t"><span class="ic">⛏️</span><span class="nm">Quarry</span><span class="ct">10w 2s</span></div>
+          <div class="tool" data-b="ironmine" title="+4 iron / 24t — on iron vein"><span class="ic">⚙️</span><span class="nm">Iron</span><span class="ct">14w 4s</span></div>
+          <div class="tool" data-b="goldmine" title="+4 gold / 30t — on gold vein"><span class="ic">🪙</span><span class="nm">Gold</span><span class="ct">16w 6s</span></div>
+          <div class="tool" data-b="barracks" title="trains units"><span class="ic">⚔️</span><span class="nm">Barracks</span><span class="ct">14w 10s</span></div>
+          <div class="tool" data-b="wall" title="blocks enemies"><span class="ic">🧱</span><span class="nm">Wall</span><span class="ct">4w 2s</span></div>
+          <div class="tool" data-b="tower" title="shoots enemies"><span class="ic">🗼</span><span class="nm">Tower</span><span class="ct">8w 8s</span></div>
+        </div>
+        <div class="group">
+          <div class="grpname">GARRISON</div>
+          <div class="tool unit" id="t-spearman" title="cheap frontline"><span class="ic">🛡️</span><span class="nm">Spearman</span><span class="ct">8g 2i</span></div>
+          <div class="tool unit" id="t-archer" title="ranged, weak in melee"><span class="ic">🏹</span><span class="nm">Archer</span><span class="ct">10g 8w</span></div>
+          <div class="tool unit" id="t-knight" title="heavy infantry"><span class="ic">⚜️</span><span class="nm">Knight</span><span class="ct">20g 6i</span></div>
+          <div class="tool unit" id="t-hold" title="stand your ground (X)"><span class="ic">🧍</span><span class="nm">Hold</span><span class="ct">stop orders</span></div>
+          <div class="tool" id="t-repair" title="click, then click a damaged building"><span class="ic">🔨</span><span class="nm">Repair</span><span class="ct">wood+stone</span></div>
+        </div>
+        <div class="group">
+          <div class="grpname">TECH</div>
+          <div class="tool tech" data-tech="training" title="+25% melee dmg (new recruits)"><span class="ic">🎖️</span><span class="nm">Drill</span><span class="ct">30g 5i</span></div>
+          <div class="tool tech" data-tech="longbow" title="archers +1 range, +25% dmg"><span class="ic">🏹</span><span class="nm">Longbow</span><span class="ct">35g 20w</span></div>
+          <div class="tool tech" data-tech="plate" title="+25 HP, +15 morale"><span class="ic">🛡️</span><span class="nm">Plate</span><span class="ct">50g 20i</span></div>
+          <div class="tool tech" data-tech="heraldry" title="+30 morale, +20% charge"><span class="ic">🚩</span><span class="nm">Heraldry</span><span class="ct">60g 25i</span></div>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+          <button id="btnTutorial" class="tool" style="margin:0" title="Show tutorial">❓</button>
+          <button id="btnPause" class="tool" style="margin:0">⏸ Pause</button>
+          <button id="btnMute" class="tool" style="margin:0">🔊</button>
+        </div>
+      </div>
+    </div>
+    <div id="tutorial" role="dialog" aria-label="Tutorial">
+      <div id="tCard">
+        <span id="tStep">TUTORIAL · 1 / 7</span>
+        <h2 id="tTitle">Welcome, Castellan</h2>
+        <p id="tText"></p>
+        <div class="keys" id="tKeys"></div>
+        <div id="tBtns">
+          <button id="tPrev" type="button">Back</button>
+          <button id="tSkip" type="button">Skip</button>
+          <button id="tNext" class="primary" type="button">Next</button>
+        </div>
+      </div>
+    </div>
+    <div id="overlay">
+      <div id="card">
+        <h1 id="ovTitle">IRON HOLDFAST</h1>
+        <p id="ovText">A real-time siege builder. Grow food and wood, mine stone and iron, raise walls and towers, train a garrison — then march on the enemy camp before its waves chew through your keep.</p>
+        <button id="ovBtn">Begin the hold</button>
+      </div>
+    </div>
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>
