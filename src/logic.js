@@ -1300,3 +1300,9 @@ export function viewFor(state, playerId) {
       : null,
   };
 }
+// ── shared core surface ─────────────────────────────────────────────────────
+// Single source of truth for modules both inside and outside the pure ruleset
+// (tactics, combat-model, progression) — import FROM here, never add logic here.
+export { BUILDINGS, UNITS, ENEMY_UNITS, TECHS, PASSABLE, PRODUCTION,
+  GRASS, FOREST, ROCK, IRON, GOLD, WATER, F_PLAYER, F_ENEMY,
+  WWX, WWY, WT_PLAIN, WT_FOREST, WT_HILL, WT_MOUNTAIN, WT_RIVER };

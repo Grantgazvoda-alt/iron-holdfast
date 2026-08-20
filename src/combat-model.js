@@ -1,3 +1,5 @@
+import { UNITS, ENEMY_UNITS, F_PLAYER, F_ENEMY } from "./logic.js";
+
 export const WEAPONS = Object.freeze({
   sword: { reach: 1.25, stamina: 12, windup: 0.28, recovery: 0.42, slash: 28, pierce: 10, armorPierce: 0.2 },
   spear: { reach: 2.15, stamina: 10, windup: 0.34, recovery: 0.5, slash: 8, pierce: 34, armorPierce: 0.38 },

@@ -1,3 +1,5 @@
+import { UNITS, BUILDINGS, TECHS } from "./logic.js";
+
 export const SAVE_VERSION = 1;
 export const PATHS = Object.freeze({
   warden: [

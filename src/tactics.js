@@ -1,6 +1,8 @@
 // Iron Holdfast premium tactical foundation.
 // Pure deterministic helpers: no clocks, random calls, network or mutable globals.
 
+import { UNITS, ENEMY_UNITS, F_PLAYER, F_ENEMY } from "./logic.js";
+
 export const FORMATIONS = {
   line: { id: "line", label: "Line", spacing: 1, cohesion: 1.0, defense: 1.0, missile: 1.0, charge: 1.0 },
   shieldwall: { id: "shieldwall", label: "Shield Wall", spacing: 1, cohesion: 1.25, defense: 1.3, missile: 0.75, charge: 0.65 },

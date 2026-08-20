@@ -942,6 +942,7 @@ if (mm) {
 
 let selected = new Set();
 let mode = "idle"; // "idle" | "build:<b>"
+let worldMode = false; // overworld (slice 1)
 let mouse = { x: 0, y: 0 };
 let panning = false;
 let panLast = null;
@@ -965,6 +966,11 @@ function draw() {
   ctx.fillRect(0, 0, w, h);
 
   if (!v) return;
+
+  if (worldMode) {
+    drawWorld();
+    return;
+  }
   const tSize = TILE * zoom;
   const k = prev ? Math.max(0, Math.min(1, (performance.now() - lastStateMs) / 500)) : 1;
 
@@ -1130,6 +1136,75 @@ function draw() {
 
 // client-side visual effects (advance + paint in one pass)
 let lastFxAt = 0;
+// overworld renderer (slice 1): terrain, towns, player army, rival lords
+function drawWorld() {
+  const wr = v.world;
+  if (!wr) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const cs = Math.min(w / wr.W, h / wr.H);
+  const ox = (w - cs * wr.W) / 2;
+  const oy0 = (h - cs * wr.H) / 2;
+
+  const COL = ["#5d8a4a", "#2f5d28", "#8a7a55", "#6f6252", "#3a5d7d"];
+  for (let y = 0; y < wr.H; y++)
+    for (let x = 0; x < wr.W; x++) {
+      ctx.fillStyle = COL[wr.cells[y * wr.W + x] || 0];
+      ctx.fillRect(ox + x * cs, oy0 + y * cs, cs + 0.5, cs + 0.5);
+    }
+
+  // towns: friendly = gold, enemy = red
+  for (const t of wr.towns) {
+    ctx.fillStyle = t.faction === 0 ? "#f2ce6e" : "#c84b42";
+    ctx.beginPath();
+    ctx.arc(ox + (t.x + 0.5) * cs, oy0 + (t.y + 0.5) * cs, cs * 0.33, 0, 7);
+    ctx.fill();
+    ctx.strokeStyle = "#241a0c";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#241a0c";
+    ctx.font = `${Math.max(8, cs * 0.28)}px Georgia, serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(t.name, ox + (t.x + 0.5) * cs, oy0 + (t.y + 0.5) * cs - cs * 0.5);
+  }
+
+  // rival lords: dark purple pennants
+  for (const l of wr.lords) {
+    ctx.fillStyle = "#7a3fa0";
+    ctx.beginPath();
+    ctx.arc(ox + (l.x + 0.5) * cs, oy0 + (l.y + 0.5) * cs, cs * 0.3, 0, 7);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = `${Math.max(7, cs * 0.2)}px Georgia, serif`;
+    ctx.fillText(l.troops, ox + (l.x + 0.5) * cs, oy0 + (l.y + 0.5) * cs + cs * 0.12);
+  }
+
+  // your army: azure + gold crown
+  const ax = ox + (wr.army.x + 0.5) * cs;
+  const ay = oy0 + (wr.army.y + 0.5) * cs;
+  ctx.fillStyle = "#2f6fd0";
+  ctx.beginPath();
+  ctx.arc(ax, ay, cs * 0.46, 0, 7);
+  ctx.fill();
+  ctx.strokeStyle = "#ffd75e";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = `${Math.max(8, cs * 0.26)}px Georgia, serif`;
+  ctx.textAlign = "center";
+  ctx.fillText(`⚑ ${wr.army.troops}`, ax, ay + cs * 0.18);
+
+  // supply bar
+  ctx.fillStyle = "rgba(0,0,0,.5)";
+  ctx.fillRect(ox, oy0 + wr.H * cs + 6, wr.W * cs, 10);
+  ctx.fillStyle = "#8fce6a";
+  ctx.fillRect(ox, oy0 + wr.H * cs + 6, wr.W * cs * Math.min(1, wr.army.supply / 200), 10);
+  ctx.fillStyle = "#fff";
+  ctx.font = "11px Georgia, serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`Supply ${wr.army.supply} · Day ${wr.day} — click a tile to march (W toggles world)`, ox + (wr.W * cs) / 2, oy0 + wr.H * cs + 26);
+}
+
 function drawFx() {
   const now = performance.now();
   const stepMs = lastFxAt ? Math.min(50, now - lastFxAt) : 16;
@@ -1302,6 +1377,20 @@ window.addEventListener("mouseup", (e) => {
 function handleClick() {
   const mx = mouse.x;
   const my = mouse.y;
+  if (worldMode) {
+    // overworld: pick a world tile and march the army there
+    if (!v?.world) return;
+    const cw = canvas.clientWidth || canvas.width;
+    const ch = canvas.clientHeight || canvas.height;
+    const cs = Math.min(cw / v.world.W, ch / v.world.H);
+    const ox = (cw - cs * v.world.W) / 2;
+    const oy0 = (ch - cs * v.world.H) / 2;
+    const tx = Math.floor((mx - ox) / cs);
+    const ty = Math.floor((my - oy0) / cs);
+    if (tx < 0 || ty < 0 || tx >= v.world.W || ty >= v.world.H) return;
+    send({ type: "action", action: { type: "world_march", x: tx, y: ty } });
+    return;
+  }
   if (mode.startsWith("build:")) {
     const b = mode.slice(6);
     const [tx, ty] = tileAt(mx, my);
@@ -1388,6 +1477,12 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "x" || e.key === "X") {
     if (selected.size) send({ type: "action", action: { type: "hold", ids: [...selected] } });
+  }
+  if (e.key === "w" || e.key === "W") {
+    worldMode = !worldMode;
+    document.querySelectorAll(".tool[data-b]").forEach((x) => x.classList.remove("active"));
+    repairBtn.classList.remove("active");
+    mode = "idle";
   }
 });
 
