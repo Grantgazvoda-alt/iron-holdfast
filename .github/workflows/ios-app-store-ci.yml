@@ -1,0 +1,248 @@
+name: iOS App Store CI
+
+on:
+  push:
+    branches:
+      - "feature/ios-app-store-release"
+  pull_request:
+    paths:
+      - "mobile/ios/**"
+      - "public/**"
+      - "scripts/prepare-mobile.mjs"
+      - ".github/workflows/ios-app-store-ci.yml"
+      - "docs/APP_STORE_CONNECT_SUBMISSION.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-app-store-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  ios:
+    name: iOS 26 / simulator + device build
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Publish validation start status
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -d "{\"state\":\"pending\",\"context\":\"ios-app-store/current-head\",\"description\":\"Run $GITHUB_RUN_ID started\",\"target_url\":\"$RUN_URL\"}"
+
+      - name: Select Xcode 26.3
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+
+      - name: Validate and prepare packaged game assets
+        env:
+          HF_MOBILE_SERVER: https://iron-empire.higgsfield.app
+        run: |
+          node --version
+          node --check scripts/prepare-mobile.mjs
+          node --check public/client.js
+          node --check public/battle.js
+          node scripts/prepare-mobile.mjs
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/client.js
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/battle.js
+          test -s mobile/www/index.html
+          test -s mobile/www/battle.html
+          test -s mobile/www/privacy.html
+          test -s mobile/www/support.html
+          grep -q 'Iron Holdfast Privacy Policy' mobile/www/privacy.html
+          grep -q 'Iron Holdfast Support' mobile/www/support.html
+          rm -rf mobile/ios/IronHoldfast/www
+          cp -R mobile/www mobile/ios/IronHoldfast/www
+
+      - name: Guard against committed Apple signing secrets and unnecessary required-reason APIs
+        shell: bash
+        run: |
+          if grep -R -n -E --exclude='*.md' --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' --exclude='*.webp' \
+            'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|BEGIN CERTIFICATE|APP_STORE_CONNECT_PRIVATE_KEY|MATCH_PASSWORD|APPLE_ID_PASSWORD' \
+            mobile/ios scripts public; then
+            echo 'Potential Apple signing credential material found in release sources.' >&2
+            exit 1
+          fi
+          if grep -R -n --include='*.swift' 'UserDefaults' mobile/ios; then
+            echo 'UserDefaults would introduce a required-reason API declaration; do not add it solely for CI/runtime probing.' >&2
+            exit 1
+          fi
+
+      - name: Generate app icon sizes
+        run: |
+          APPICON="mobile/ios/IronHoldfast/Assets.xcassets/AppIcon.appiconset"
+          for size in 20 29 40 58 60 76 80 87 120 152 167 180 1024; do
+            sips -z "$size" "$size" public/favicon.png --out "$APPICON/icon-$size.png" >/dev/null
+          done
+          mkdir -p mobile/store-assets
+          cp "$APPICON/icon-1024.png" mobile/store-assets/apple-app-icon-1024.png
+
+      - name: Generate Xcode project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cd mobile/ios
+          xcodegen generate
+
+      - name: Build simulator without signing
+        run: >-
+          xcodebuild
+          -project mobile/ios/IronHoldfast.xcodeproj
+          -scheme IronHoldfast
+          -sdk iphonesimulator
+          -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath mobile/ios/build
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+      - name: Verify iOS simulator app bundle
+        run: test -d mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app
+
+      - name: Launch and verify game DOM on iPhone Simulator
+        shell: bash
+        run: |
+          APP="mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app"
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; devices=[x for runtime in d.values() for x in runtime if x.get("isAvailable") and x.get("name","").startswith("iPhone")]; preferred=["iPhone 16 Pro Max","iPhone 17 Pro Max","iPhone 15 Pro Max"]; chosen=next((x for n in preferred for x in devices if x.get("name")==n), devices[0]); print(chosen["udid"])')"
+          xcrun simctl list devices | grep "$UDID" || true
+          xcrun simctl boot "$UDID" || true
+
+          booted=0
+          for i in $(seq 1 60); do
+            STATE="$(xcrun simctl list devices -j | python3 -c 'import json,sys; u=sys.argv[1]; d=json.load(sys.stdin)["devices"]; print(next((x.get("state","") for runtime in d.values() for x in runtime if x.get("udid")==u), ""))' "$UDID")"
+            if test "$STATE" = 'Booted'; then
+              booted=1
+              break
+            fi
+            sleep 2
+          done
+          if test "$booted" != '1'; then
+            echo '::error::iPhone Simulator did not reach Booted state within 120 seconds.'
+            exit 1
+          fi
+
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" com.ironholdfast.game
+          test -d "$(xcrun simctl get_app_container "$UDID" com.ironholdfast.game app)"
+
+          DATA_CONTAINER="$(xcrun simctl get_app_container "$UDID" com.ironholdfast.game data)"
+          RUNTIME_MARKER="$DATA_CONTAINER/Library/Caches/iron-holdfast-runtime.json"
+          ready=0
+          title=''
+          last_error=''
+          for i in $(seq 1 30); do
+            if test -s "$RUNTIME_MARKER"; then
+              if python3 - "$RUNTIME_MARKER" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    payload = json.load(fh)
+if payload.get("ready") is not True or "iron holdfast" not in str(payload.get("title", "")).lower():
+    raise SystemExit(1)
+PY
+              then
+                ready=1
+                title="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("title", ""))' "$RUNTIME_MARKER")"
+                break
+              fi
+              last_error="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("error", ""))' "$RUNTIME_MARKER" 2>/dev/null || true)"
+            fi
+            sleep 1
+          done
+
+          mkdir -p mobile/ios/smoke
+          xcrun simctl io "$UDID" screenshot mobile/ios/smoke/launch.png
+          test -s mobile/ios/smoke/launch.png
+          sips -g pixelWidth -g pixelHeight mobile/ios/smoke/launch.png
+
+          if test "$ready" != '1'; then
+            echo '::error::The native app process launched, but the packaged Iron Holdfast DOM did not report ready.'
+            echo "Runtime error: $last_error"
+            xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "IronHoldfast"' | tail -200 || true
+            exit 1
+          fi
+          echo "Verified packaged game DOM: $title"
+
+      - name: Build device Release without signing
+        run: >-
+          xcodebuild
+          -project mobile/ios/IronHoldfast.xcodeproj
+          -scheme IronHoldfast
+          -sdk iphoneos
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -derivedDataPath mobile/ios/device-build
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          build
+
+      - name: Verify unsigned iOS device app bundle and metadata
+        shell: bash
+        run: |
+          APP="mobile/ios/device-build/Build/Products/Release-iphoneos/IronHoldfast.app"
+          PLIST="$APP/Info.plist"
+          test -d "$APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = 'com.ironholdfast.game'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = '1.0.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" = '1'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST")" = '16.0'
+          test -s "$APP/www/index.html"
+          test -s "$APP/www/battle.html"
+          test -s "$APP/www/privacy.html"
+          test -s "$APP/www/support.html"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-simulator-app
+          path: mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-device-unsigned-app
+          path: mobile/ios/device-build/Build/Products/Release-iphoneos/IronHoldfast.app
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-simulator-smoke
+          path: mobile/ios/smoke/launch.png
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-store-assets
+          path: mobile/store-assets
+          if-no-files-found: error
+
+      - name: Publish validation result status
+        if: ${{ always() && github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          case "$JOB_STATUS" in
+            success) STATE='success' ;;
+            cancelled) STATE='error' ;;
+            *) STATE='failure' ;;
+          esac
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -d "{\"state\":\"$STATE\",\"context\":\"ios-app-store/current-head\",\"description\":\"Run $GITHUB_RUN_ID: $JOB_STATUS\",\"target_url\":\"$RUN_URL\"}" || true
