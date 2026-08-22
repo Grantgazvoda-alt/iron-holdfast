@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: campaign-ci-${{ github.event.pull_request.number || github.ref }}
+  group: campaign-ci-${{ github.sha }}
   cancel-in-progress: true
 
 permissions:
