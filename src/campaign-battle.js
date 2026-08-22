@@ -1,9 +1,7 @@
+import { terrainTacticalProfile } from "./world-terrain.js";
+
 // Deterministic campaign encounter coordinator for the overworld.
-//
-// This module has no timers, I/O, or random calls. It operates only on JSON-like
-// state passed by the authoritative room, so the same world + orders always
-// produce the same battle outcome. It intentionally stays separate from
-// logic.js until the transition layer is fully covered by tests.
+// Same world + orders always produce the same battle outcome.
 
 export const CAMPAIGN_BATTLE_VERSION = 1;
 
@@ -16,16 +14,6 @@ export const FIELD_ORDERS = Object.freeze({
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const int = (value, fallback = 0) => Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
-
-function terrainProfile(terrain) {
-  // Mirrors current overworld terrain codes without importing logic.js, keeping
-  // this coordinator dependency-light and independently testable.
-  // 0 plain, 1 forest, 2 hill, 3 mountain, 4 river.
-  if (terrain === 1) return { attacker: 0.92, defender: 1.12, name: "forest" };
-  if (terrain === 2) return { attacker: 0.9, defender: 1.18, name: "hill" };
-  if (terrain === 4) return { attacker: 0.86, defender: 1.08, name: "river crossing" };
-  return { attacker: 1, defender: 1, name: "open ground" };
-}
 
 export function detectWorldEncounter(world) {
   if (!world?.army || !Array.isArray(world.lords)) return null;
@@ -53,6 +41,7 @@ export function createCampaignBattle(world, lordId) {
   }
 
   const terrain = world.cells?.[world.army.y * world.W + world.army.x] ?? 0;
+  const ground = terrainTacticalProfile(terrain);
   const day = int(world.day);
   return {
     v: CAMPAIGN_BATTLE_VERSION,
@@ -65,20 +54,24 @@ export function createCampaignBattle(world, lordId) {
     x: int(world.army.x),
     y: int(world.army.y),
     terrain,
-    terrainName: terrainProfile(terrain).name,
+    terrainName: ground.name,
     player: { troops: int(world.army.troops), morale: 100, casualties: 0 },
     enemy: { troops: int(lord.troops), morale: 100, casualties: 0 },
     result: null,
-    log: [`Encountered ${String(lord.name || "a rival lord")} on ${terrainProfile(terrain).name}.`],
+    log: [`Encountered ${String(lord.name || "a rival lord")} on ${ground.name}.`],
   };
 }
 
-function sideLosses(attacker, defender, attackOrder, defendOrder, terrain, attackerIsPlayer) {
+function sideLosses(attacker, defender, attackOrder, defendOrder, terrain, attackerIsPlayer, round) {
   if (attacker.troops <= 0 || defender.troops <= 0) return 0;
   const attack = FIELD_ORDERS[attackOrder] || FIELD_ORDERS.advance;
   const defense = FIELD_ORDERS[defendOrder] || FIELD_ORDERS.advance;
-  const ground = terrainProfile(terrain);
-  const terrainAttack = attackerIsPlayer ? ground.attacker : 1;
+  const ground = terrainTacticalProfile(terrain);
+  const terrainAttack = attackerIsPlayer
+    ? ground.attacker
+    : round === 0
+      ? 1 + ground.ambush
+      : 1;
   const terrainDefense = attackerIsPlayer ? ground.defender : 1;
   const strengthRatio = clamp(attacker.troops / Math.max(1, defender.troops), 0.45, 2.2);
   const pressure = attack.attack * terrainAttack * strengthRatio;
@@ -94,9 +87,24 @@ export function stepCampaignBattle(battle, playerOrder = "advance", enemyOrder =
   const player = { ...battle.player };
   const enemy = { ...battle.enemy };
 
-  // Simultaneous losses: both values are derived from the same pre-round state.
-  const enemyLoss = sideLosses(player, enemy, pOrder, eOrder, battle.terrain, true);
-  const playerLoss = sideLosses(enemy, player, eOrder, pOrder, battle.terrain, false);
+  const enemyLoss = sideLosses(
+    player,
+    enemy,
+    pOrder,
+    eOrder,
+    battle.terrain,
+    true,
+    battle.round,
+  );
+  const playerLoss = sideLosses(
+    enemy,
+    player,
+    eOrder,
+    pOrder,
+    battle.terrain,
+    false,
+    battle.round,
+  );
   player.troops = Math.max(0, player.troops - playerLoss);
   enemy.troops = Math.max(0, enemy.troops - enemyLoss);
   player.casualties += playerLoss;
@@ -123,17 +131,17 @@ export function stepCampaignBattle(battle, playerOrder = "advance", enemyOrder =
     result = "enemy_withdrew";
   }
 
-  const round = battle.round + 1;
+  const nextRound = battle.round + 1;
   return {
     ...battle,
-    round,
+    round: nextRound,
     status,
     result,
     player,
     enemy,
     log: [
       ...(battle.log || []),
-      `Round ${round}: ${pOrder} vs ${eOrder}; player -${playerLoss}, enemy -${enemyLoss}.`,
+      `Round ${nextRound}: ${pOrder} vs ${eOrder}; player -${playerLoss}, enemy -${enemyLoss}.`,
     ].slice(-12),
   };
 }
