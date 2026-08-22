@@ -7,7 +7,8 @@
     "dev": "wrangler dev",
     "test": "vitest run tests/",
     "typecheck": "tsc --noEmit",
-    "check:logic": "bun run scripts/check-logic.mjs"
+    "check:logic": "bun run scripts/check-logic.mjs",
+    "mobile:prepare": "node scripts/prepare-mobile.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.20.1",
