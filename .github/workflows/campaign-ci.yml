@@ -1,0 +1,73 @@
+name: Campaign CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: campaign-ci-${{ github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  campaign:
+    name: Full campaign certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Set up Bun for build and Bun-native tests
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install pinned dev dependencies
+        run: |
+          node --version
+          npm --version
+          npm install --no-audit --no-fund --package-lock=false
+
+      - name: Validate deterministic game contract
+        run: node scripts/check-logic.mjs
+
+      - name: Strict production TypeScript
+        run: npx tsc --noEmit -p tsconfig.ci.json
+
+      - name: Build Worker and static bundle
+        run: bun run scripts/build.mjs
+
+      - name: Run Cloudflare/Vitest suites
+        run: >-
+          npx vitest run
+          --exclude tests/balance.test.ts
+          --exclude 'tests/*.mjs'
+          --exclude tests/campaign-ui.test.ts
+
+      - name: Run Node/Vitest static campaign UI suite
+        run: npx vitest run tests/campaign-ui.test.ts --config vitest.node.config.ts
+
+      - name: Run Bun-native balance regression suite
+        run: bun test tests/balance.test.ts
+
+      - name: Validate campaign/mobile browser scripts
+        run: |
+          node --check public/client.js
+          node --check public/battle.js
+          node --check public/session.js
+          node --check public/campaign-ui.js
+
+      - name: Run dependency-free release regressions
+        run: >-
+          node --test
+          tests/release-certification.test.mjs
+          tests/release-regressions.test.mjs
+          tests/protocol-certification.mjs
+          tests/session-certification.test.mjs

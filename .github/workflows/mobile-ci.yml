@@ -1,0 +1,420 @@
+name: Mobile CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    name: Release certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate game contract and JavaScript syntax
+        run: |
+          node --version
+          node --check scripts/check-logic.mjs
+          node scripts/check-logic.mjs
+          node --check scripts/prepare-mobile.mjs
+          node --check public/session.js
+          node --check public/client.js
+          node --check public/battle.js
+      - name: Run dependency-free gameplay, session, and protocol certification
+        run: >-
+          node --test
+          tests/release-certification.test.mjs
+          tests/release-regressions.test.mjs
+          tests/protocol-certification.mjs
+          tests/session-certification.test.mjs
+      - name: Prepare and inspect mobile web package
+        env:
+          HF_MOBILE_SERVER: https://iron-empire.higgsfield.app
+        run: |
+          node scripts/prepare-mobile.mjs
+          test -s mobile/www/index.html
+          test -s mobile/www/battle.html
+          test -s mobile/www/client.js
+          test -s mobile/www/battle.js
+          test -s mobile/www/session.js
+          test -s mobile/www/privacy.html
+          test -s mobile/www/support.html
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/client.js
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/battle.js
+          grep -q 'from "./session.js"' mobile/www/client.js
+          grep -q 'from "./session.js"' mobile/www/battle.js
+          grep -q 'location.href = `/?room=${encodeURIComponent(room)}`' mobile/www/battle.js
+          grep -q 'maximum-scale=1,user-scalable=no,viewport-fit=cover' mobile/www/index.html
+          grep -q 'maximum-scale=1,user-scalable=no,viewport-fit=cover' mobile/www/battle.html
+          grep -q 'apple-mobile-web-app-capable' mobile/www/index.html
+          grep -q 'Iron Holdfast Privacy Policy' mobile/www/privacy.html
+          grep -q 'Iron Holdfast Support' mobile/www/support.html
+          if grep -Fq 'get("room") || "main"' mobile/www/client.js mobile/www/battle.js mobile/www/index.html || \
+             grep -Fq "get('room')||'main'" mobile/www/client.js mobile/www/battle.js mobile/www/index.html; then
+            echo 'Legacy global main-room fallback remains in mobile package.' >&2
+            exit 1
+          fi
+      - name: Guard against committed signing secrets
+        shell: bash
+        run: |
+          if grep -R -n -E --exclude='*.md' --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' --exclude='*.webp' \
+            'BEGIN (RSA |EC |OPENSSH |)?PRIVATE KEY|BEGIN CERTIFICATE|APP_STORE_CONNECT_PRIVATE_KEY|MATCH_PASSWORD|APPLE_ID_PASSWORD|GOOGLE_SERVICE_ACCOUNT' \
+            mobile scripts public; then
+            echo 'Potential signing or service credential material found in release sources.' >&2
+            exit 1
+          fi
+
+  live-smoke:
+    name: Live game + store URL smoke
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check all live store-facing URLs
+        shell: bash
+        run: |
+          fail=0
+          check_url() {
+            label="$1"
+            url="$2"
+            pattern="$3"
+            out="$4"
+            if ! curl --fail --silent --show-error --location --max-time 20 "$url" -o "$out"; then
+              echo "::error::$label is unavailable: $url"
+              fail=1
+              return
+            fi
+            if ! grep -Eqi "$pattern" "$out"; then
+              echo "::error::$label returned unexpected content: $url"
+              fail=1
+            fi
+          }
+          check_url 'Live game' 'https://iron-empire.higgsfield.app/' 'Iron Holdfast|IRON HOLDFAST' /tmp/game.html
+          check_url 'Privacy policy' 'https://iron-empire.higgsfield.app/privacy.html' 'Iron Holdfast Privacy Policy' /tmp/privacy.html
+          check_url 'Support page' 'https://iron-empire.higgsfield.app/support.html' 'Iron Holdfast Support' /tmp/support.html
+          exit "$fail"
+
+  android:
+    name: Android 16 / build + emulator smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Prepare packaged game assets
+        run: |
+          node --check scripts/prepare-mobile.mjs
+          node scripts/prepare-mobile.mjs
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/client.js
+          grep -q 'https://iron-empire.higgsfield.app' mobile/www/battle.js
+          test -s mobile/www/session.js
+      - name: Install Android 16 SDK and emulator image
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" \
+            'platforms;android-36' \
+            'build-tools;35.0.0' \
+            'platform-tools' \
+            'emulator' \
+            'system-images;android-36;google_apis;x86_64'
+          test -d "$ANDROID_HOME/system-images/android-36/google_apis/x86_64"
+      - name: Install pinned Gradle 8.13
+        run: |
+          curl --fail --silent --show-error --location https://services.gradle.org/distributions/gradle-8.13-bin.zip -o /tmp/gradle.zip
+          curl --fail --silent --show-error --location https://services.gradle.org/distributions/gradle-8.13-bin.zip.sha256 -o /tmp/gradle.sha256
+          printf '%s  %s\n' "$(cat /tmp/gradle.sha256)" /tmp/gradle.zip | sha256sum -c -
+          unzip -q /tmp/gradle.zip -d /tmp
+      - name: Build Android App Bundle and debug APK
+        run: >-
+          /tmp/gradle-8.13/bin/gradle
+          -p mobile/android
+          :app:bundleDebug
+          :app:assembleDebug
+          --stacktrace
+      - name: Verify Android package metadata
+        shell: bash
+        run: |
+          AAB='mobile/android/app/build/outputs/bundle/debug/app-debug.aab'
+          APK='mobile/android/app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$AAB"
+          test -s "$APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          BADGING="$($AAPT dump badging "$APK" | head -1)"
+          echo "$BADGING"
+          grep -q "name='com.ironholdfast.game'" <<<"$BADGING"
+          grep -q "versionCode='1'" <<<"$BADGING"
+          grep -q "versionName='1.0.0'" <<<"$BADGING"
+      - name: Launch Android app in emulator
+        shell: bash
+        run: |
+          APK='mobile/android/app/build/outputs/apk/debug/app-debug.apk'
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          AVD_ROOT="$HOME/.android/avd"
+          AVD_DIR="$AVD_ROOT/ironholdfast-ci.avd"
+          test -x "$ADB"
+          test -x "$EMULATOR"
+          test -d "$ANDROID_HOME/system-images/android-36/google_apis/x86_64"
+          "$ADB" kill-server || true
+          "$ADB" start-server
+          "$ADB" devices -l
+          if test -e /dev/kvm; then sudo chmod 666 /dev/kvm || true; fi
+          rm -rf "$AVD_DIR" "$AVD_ROOT/ironholdfast-ci.ini"
+          mkdir -p "$AVD_DIR"
+          cat > "$AVD_ROOT/ironholdfast-ci.ini" <<EOF
+          avd.ini.encoding=UTF-8
+          path=$AVD_DIR
+          path.rel=avd/ironholdfast-ci.avd
+          target=android-36
+          EOF
+          cat > "$AVD_DIR/config.ini" <<'EOF'
+          AvdId=ironholdfast-ci
+          PlayStore.enabled=false
+          abi.type=x86_64
+          avd.ini.displayname=Iron Holdfast CI
+          avd.ini.encoding=UTF-8
+          disk.dataPartition.size=2G
+          fastboot.forceChosenSnapshotBoot=no
+          fastboot.forceColdBoot=yes
+          fastboot.forceFastBoot=no
+          hw.accelerometer=yes
+          hw.arc=false
+          hw.audioInput=no
+          hw.battery=yes
+          hw.camera.back=none
+          hw.camera.front=none
+          hw.cpu.arch=x86_64
+          hw.cpu.ncore=2
+          hw.dPad=no
+          hw.gps=yes
+          hw.gpu.enabled=yes
+          hw.gpu.mode=auto
+          hw.initialOrientation=Portrait
+          hw.keyboard=yes
+          hw.lcd.density=420
+          hw.lcd.height=2400
+          hw.lcd.width=1080
+          hw.mainKeys=no
+          hw.ramSize=2048
+          hw.sdCard=no
+          hw.sensors.orientation=yes
+          hw.sensors.proximity=yes
+          hw.trackBall=no
+          image.sysdir.1=system-images/android-36/google_apis/x86_64/
+          runtime.network.latency=none
+          runtime.network.speed=full
+          showDeviceFrame=no
+          tag.display=Google APIs
+          tag.id=google_apis
+          vm.heapSize=256
+          EOF
+          echo 'Configured AVD metadata:'
+          cat "$AVD_ROOT/ironholdfast-ci.ini"
+          grep -E '^(AvdId|abi.type|image.sysdir.1|hw.cpu.arch|hw.ramSize)=' "$AVD_DIR/config.ini"
+          "$EMULATOR" -list-avds
+          "$EMULATOR" -list-avds | grep -Fxq ironholdfast-ci
+          "$EMULATOR" \
+            -avd ironholdfast-ci \
+            -no-window \
+            -no-audio \
+            -no-snapshot \
+            -no-boot-anim \
+            -gpu software >/tmp/emulator.log 2>&1 &
+          EMULATOR_PID=$!
+          device_seen=0
+          for i in $(seq 1 90); do
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo '::error::Android emulator exited before registering with ADB.'
+              cat /tmp/emulator.log || true
+              exit 1
+            fi
+            if "$ADB" devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { found=1 } END { exit !found }'; then
+              device_seen=1
+              break
+            fi
+            sleep 2
+          done
+          if test "$device_seen" != '1'; then
+            echo '::error::Android emulator did not register with ADB within 180 seconds.'
+            "$ADB" devices -l || true
+            tail -200 /tmp/emulator.log || true
+            exit 1
+          fi
+          booted=0
+          for i in $(seq 1 120); do
+            if test "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = '1'; then
+              booted=1
+              break
+            fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo '::error::Android emulator exited during boot.'
+              tail -200 /tmp/emulator.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+          if test "$booted" != '1'; then
+            echo '::error::Android emulator registered with ADB but did not complete boot within 240 seconds.'
+            "$ADB" devices -l || true
+            tail -200 /tmp/emulator.log || true
+            exit 1
+          fi
+          "$ADB" install -r "$APK"
+          "$ADB" shell am start -W -n com.ironholdfast.game/.MainActivity
+          sleep 5
+          PID="$("$ADB" shell pidof com.ironholdfast.game | tr -d '\r')"
+          test -n "$PID"
+          mkdir -p mobile/android/smoke
+          "$ADB" exec-out screencap -p > mobile/android/smoke/launch.png
+          test -s mobile/android/smoke/launch.png
+          if "$ADB" logcat -d -t 250 | grep -E 'FATAL EXCEPTION|Process: com\.ironholdfast\.game'; then
+            echo 'Android runtime crash detected.' >&2
+            exit 1
+          fi
+          "$ADB" emu kill || true
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-android-debug-aab
+          path: mobile/android/app/build/outputs/bundle/debug/app-debug.aab
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-android-emulator-smoke
+          path: mobile/android/smoke/launch.png
+          if-no-files-found: error
+
+  ios:
+    name: iOS 26 / simulator + device build
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select Xcode 26.3
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+      - name: Prepare packaged game assets
+        run: |
+          node --check scripts/prepare-mobile.mjs
+          node scripts/prepare-mobile.mjs
+          rm -rf mobile/ios/IronHoldfast/www
+          cp -R mobile/www mobile/ios/IronHoldfast/www
+          test -s mobile/ios/IronHoldfast/www/session.js
+      - name: Generate app and store artwork sizes
+        run: |
+          APPICON="mobile/ios/IronHoldfast/Assets.xcassets/AppIcon.appiconset"
+          for size in 20 29 40 58 60 76 80 87 120 152 167 180 1024; do
+            sips -z "$size" "$size" public/favicon.png --out "$APPICON/icon-$size.png" >/dev/null
+          done
+          mkdir -p mobile/store-assets
+          cp "$APPICON/icon-1024.png" mobile/store-assets/apple-app-icon-1024.png
+          sips -z 512 512 public/favicon.png --out mobile/store-assets/google-play-icon-512.png >/dev/null
+          sips --resampleWidth 1024 public/cover.png --out /tmp/google-play-feature.png >/dev/null
+          sips --cropToHeightWidth 500 1024 /tmp/google-play-feature.png --out mobile/store-assets/google-play-feature-1024x500.png >/dev/null
+      - name: Generate Xcode project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cd mobile/ios
+          xcodegen generate
+      - name: Build simulator without signing
+        run: >-
+          xcodebuild
+          -project mobile/ios/IronHoldfast.xcodeproj
+          -scheme IronHoldfast
+          -sdk iphonesimulator
+          -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath mobile/ios/build
+          CODE_SIGNING_ALLOWED=NO
+          build
+      - name: Verify iOS simulator app bundle
+        run: test -d mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app
+      - name: Launch on iPhone Simulator
+        shell: bash
+        run: |
+          APP="mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app"
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for runtime in d.values() for x in runtime if x.get("isAvailable") and x.get("name","").startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          open -a Simulator --args -CurrentDeviceUDID "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" com.ironholdfast.game
+          DATA="$(xcrun simctl get_app_container "$UDID" com.ironholdfast.game data)"
+          STATUS="$DATA/Library/Caches/ironholdfast-web-status.txt"
+          for i in $(seq 1 20); do
+            if test -s "$STATUS"; then break; fi
+            sleep 1
+          done
+          if ! test -s "$STATUS"; then
+            echo '::error::Iron Holdfast launched but WKWebView never reported DOM readiness.'
+            xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "IronHoldfast"' || true
+            exit 1
+          fi
+          WEB_STATUS="$(cat "$STATUS")"
+          echo "iOS WebView status: $WEB_STATUS"
+          if test "$WEB_STATUS" != 'topbar'; then
+            echo "::error::Iron Holdfast WKWebView did not render the expected command UI: $WEB_STATUS"
+            xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "IronHoldfast"' || true
+            exit 1
+          fi
+          test -d "$(xcrun simctl get_app_container "$UDID" com.ironholdfast.game app)"
+          mkdir -p mobile/ios/smoke
+          xcrun simctl io "$UDID" screenshot mobile/ios/smoke/launch.png
+          test -s mobile/ios/smoke/launch.png
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-simulator-smoke
+          path: mobile/ios/smoke/launch.png
+          if-no-files-found: error
+      - name: Build device Release without signing
+        run: >-
+          xcodebuild
+          -project mobile/ios/IronHoldfast.xcodeproj
+          -scheme IronHoldfast
+          -sdk iphoneos
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -derivedDataPath mobile/ios/device-build
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          build
+      - name: Verify unsigned iOS device bundle and metadata
+        shell: bash
+        run: |
+          APP="mobile/ios/device-build/Build/Products/Release-iphoneos/IronHoldfast.app"
+          PLIST="$APP/Info.plist"
+          test -d "$APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = 'com.ironholdfast.game'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = '1.0.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" = '1'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST")" = '16.0'
+          test -s "$APP/www/index.html"
+          test -s "$APP/www/battle.html"
+          test -s "$APP/www/session.js"
+          test -s "$APP/www/privacy.html"
+          test -s "$APP/www/support.html"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-simulator-app
+          path: mobile/ios/build/Build/Products/Debug-iphonesimulator/IronHoldfast.app
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-ios-device-unsigned-app
+          path: mobile/ios/device-build/Build/Products/Release-iphoneos/IronHoldfast.app
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        with:
+          name: iron-holdfast-store-assets
+          path: mobile/store-assets
+          if-no-files-found: error

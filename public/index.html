@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Iron Holdfast — castle siege builder</title>
     <meta property="og:title" content="Iron Holdfast" />
     <meta property="og:description" content="A real-time medieval siege builder: grow a castle economy, raise walls and towers, train a garrison, and destroy the enemy camp before its waves crush you." />
@@ -30,8 +30,8 @@
 
       /* top bar */
       #topbar {
-        height: 52px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
-        padding: 0 14px; background: linear-gradient(#3b2b1c, #241a10);
+        min-height: calc(52px + env(safe-area-inset-top)); flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+        padding: env(safe-area-inset-top) calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left)); background: linear-gradient(#3b2b1c, #241a10);
         color: var(--parchment); border-bottom: 3px solid var(--gold);
         position: relative; z-index: 5; user-select: none;
       }
@@ -90,7 +90,7 @@
       /* toolbelt */
       #belt {
         flex: 0 0 auto; background: linear-gradient(#2e2116, #1c130c); border-top: 3px solid #6b4f2a;
-        padding: 8px 10px; display: flex; gap: 10px; align-items: center; overflow-x: auto; user-select: none;
+        padding: 8px calc(10px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left)); display: flex; gap: 10px; align-items: center; overflow-x: auto; user-select: none;
       }
       #belt .group { display: flex; gap: 6px; align-items: center; padding-right: 10px; border-right: 1px solid rgba(217,164,65,.3); }
       #belt .group:last-child { border-right: 0; }
@@ -122,7 +122,7 @@
       #card button { margin-top: 12px; font: 15px Georgia, serif; background: var(--gold); color: #241a0c; border: 0; border-radius: 9px; padding: 10px 22px; cursor: pointer; }
       #card button:hover { background: #f2c26b; }
       @media (max-width: 900px) {
-        #hud { gap: 5px; } .bar { width: 90px; } #topbar { flex-wrap: wrap; height: auto; padding: 6px 8px; gap: 6px; }
+        #hud { gap: 5px; } .bar { width: 90px; } #topbar { flex-wrap: wrap; height: auto; padding: calc(6px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 6px calc(8px + env(safe-area-inset-left)); gap: 6px; }
         .chip { font-size: 11px; padding: 4px 6px; } #titlebar { font-size: 14px; }
         #timebox { display: none; } .evt { font-size: 12px; max-width: 80vw; }
       }
@@ -153,7 +153,7 @@
           <div class="chip"><span class="lbl">Next</span><b id="resNext">—</b></div>
         </div>
         <div id="timebox"><span id="clock">0:00</span></div>
-        <a id="btnBattle" href="/battle.html" onclick="this.href='/battle.html?room='+encodeURIComponent(new URLSearchParams(location.search).get('room')||'main')">⚔ Enter Battle</a>
+        <a id="btnBattle" href="/battle.html">⚔ Enter Battle</a>
         <button id="btnReset">⟳ New run</button>
       </div>
       <div id="stage">
@@ -218,6 +218,7 @@
         <button id="ovBtn">Begin the hold</button>
       </div>
     </div>
+    <script src="/campaign-ui.js"></script>
     <script type="module" src="/client.js"></script>
   </body>
 </html>
