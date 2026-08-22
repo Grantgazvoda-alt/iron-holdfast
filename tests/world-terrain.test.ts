@@ -33,7 +33,7 @@ describe("overworld terrain tactics", () => {
       H: 2,
       cells: [0, 0, 1, 2, 0, 4, 3, 0],
     };
-    expect(routeSupplyWeight(world, [[1, 0], [2, 0], [3, 0]])).toBe(5);
+    expect(routeSupplyWeight(world, [[1, 0], [2, 0], [3, 0]])).toBe(4.5);
     expect(routeSupplyWeight(world, [[1, 1]])).toBe(1.5);
     expect(routeSupplyWeight(world, [[2, 1]])).toBe(Infinity);
   });

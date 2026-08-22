@@ -349,7 +349,7 @@ describe("world terrain · deterministic tactic contract", () => {
   it("terrain codes map to expected march ticks & supply weights", async () => {
     const { WORLD_TERRAIN, terrainRouteCost, terrainTacticalProfile } = await import("../src/world-terrain.js");
     expect(terrainRouteCost(0)).toBe(1); // open ground
-    expect(terrainRouteCost(1)).toBe(2); // forest
+    expect(terrainRouteCost(1)).toBe(1.5); // forest (differentiated from hill)
     expect(terrainRouteCost(2)).toBe(2); // hill
     expect(terrainRouteCost(4)).toBe(1.5); // river
     expect(terrainTacticalProfile(3).marchTicks).toBe(Infinity); // mountain impassable
@@ -362,8 +362,8 @@ describe("world terrain · deterministic tactic contract", () => {
     const world = { W: 4, H: 4, cells: new Array(16).fill(0) };
     world.cells[0] = 1; // forest at (0,0)
     world.cells[5] = 2; // hill at (1,1)
-    expect(wt.routeSupplyWeight(world, [[0, 0]])).toBe(2);
-    expect(wt.routeSupplyWeight(world, [[0, 0], [1, 1], [2, 2]])).toBe(2 + 2 + 1);
+    expect(wt.routeSupplyWeight(world, [[0, 0]])).toBe(1.5);
+    expect(wt.routeSupplyWeight(world, [[0, 0], [1, 1], [2, 2]])).toBe(1.5 + 2 + 1);
     expect(wt.routeSupplyWeight(world, [[9, 9]])).toBe(Infinity); // OOB
     expect(wt.routeSupplyWeight(world, [[1, 1], [3, 3]])).toBe(2 + 1); // mountain (?) guard
   });

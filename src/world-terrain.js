@@ -3,7 +3,7 @@
 
 export const WORLD_TERRAIN = Object.freeze({
   0: Object.freeze({ code: 0, name: "open ground", marchTicks: 1, supplyWeight: 1, attacker: 1, defender: 1, ambush: 0 }),
-  1: Object.freeze({ code: 1, name: "forest", marchTicks: 2, supplyWeight: 2, attacker: 0.9, defender: 1.15, ambush: 0.12 }),
+  1: Object.freeze({ code: 1, name: "forest", marchTicks: 1.5, supplyWeight: 1.5, attacker: 0.9, defender: 1.15, ambush: 0.12 }),
   2: Object.freeze({ code: 2, name: "hill", marchTicks: 2, supplyWeight: 2, attacker: 0.88, defender: 1.22, ambush: 0 }),
   3: Object.freeze({ code: 3, name: "mountain", marchTicks: Infinity, supplyWeight: Infinity, attacker: 0, defender: 2, ambush: 0 }),
   4: Object.freeze({ code: 4, name: "river crossing", marchTicks: 1, supplyWeight: 1.5, attacker: 0.82, defender: 1.12, ambush: 0 }),
