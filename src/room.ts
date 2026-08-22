@@ -34,6 +34,14 @@
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "./env";
+import {
+  createCampaignBattle,
+  detectWorldEncounter,
+  reconcileCampaignBattle,
+  stepCampaignBattle,
+  type CampaignBattle,
+} from "./campaign-battle.js";
+import { enemyCampaignBattleOrder, isCampaignBattleOrderAction } from "./campaign-room";
 import * as logic from "./logic.js";
 import { parseClientMessage } from "./protocol";
 
@@ -47,6 +55,8 @@ interface Game {
   state: unknown;
   /** Whatever `logic.isGameOver()` returned once it ended. */
   result: unknown;
+  /** Active/resolved overworld army encounter. Persisted across hibernation. */
+  campaignBattle?: CampaignBattle | null;
   /**
    * playerId -> connId of the connection that claimed that seat. Persisted so
    * socket ownership survives hibernation; used to refuse seat hijacking.
@@ -75,7 +85,14 @@ type Dispatchable = Out[] | { out?: Out[]; wakeIn?: number | null } | void;
  * `seats.push()` would leak into every other room that had not saved yet.
  */
 export function freshGame(): Game {
-  return { status: "waiting", seats: [], state: null, result: null, claims: {} };
+  return {
+    status: "waiting",
+    seats: [],
+    state: null,
+    result: null,
+    campaignBattle: null,
+    claims: {},
+  };
 }
 
 /**
@@ -163,6 +180,7 @@ export class Room extends DurableObject<Env> {
         connected,
         view: game.state ? logic.viewFor(game.state, playerId) : null,
         result: game.result,
+        campaignBattle: game.campaignBattle ?? null,
         meta: META,
       },
     }));
@@ -286,6 +304,7 @@ export class Room extends DurableObject<Env> {
       }
       if (game.status === "waiting" && game.seats.length >= META.minPlayers) {
         game.state = logic.setup(game.seats);
+        game.campaignBattle = null;
         game.status = "playing";
       } else if (game.status === "playing" && game.state && (game.state as any).paused) {
         // the player is back — resume an auto-paused solo game
@@ -302,6 +321,31 @@ export class Room extends DurableObject<Env> {
       if (game.status !== "playing") return this.error(connId, "game is not in progress");
       const owned = game.seats.includes(playerId) && game.claims?.[playerId] === connId;
       if (!owned) return this.error(connId, "spectators cannot act");
+
+      // A world encounter is a server-owned state transition. While one is
+      // active, ordinary siege/world actions cannot mutate the frozen campaign.
+      if (game.campaignBattle?.status === "active") {
+        if (!isCampaignBattleOrderAction(msg.action)) {
+          return this.error(connId, "campaign battle requires a field order");
+        }
+        const battle = game.campaignBattle;
+        const nextBattle = stepCampaignBattle(
+          battle,
+          msg.action.order,
+          enemyCampaignBattleOrder(battle),
+        );
+        game.campaignBattle = nextBattle;
+        if (nextBattle.status === "resolved") {
+          const state = game.state as any;
+          game.state = {
+            ...state,
+            world: reconcileCampaignBattle(state.world, nextBattle),
+          };
+        }
+        await this.save(game, conns);
+        return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
+      }
+
       // logic.js is the authority on whether an action is legal, and it is
       // consulted BEFORE any state is written.
       const verdict = logic.validateAction(game.state, playerId, msg.action);
@@ -327,6 +371,7 @@ export class Room extends DurableObject<Env> {
     game.state = enough ? logic.setup(game.seats) : null;
     game.status = enough ? "playing" : "waiting";
     game.result = null;
+    game.campaignBattle = null;
     await this.save(game, conns);
     return { out: this.broadcast(game, conns), wakeIn: enough ? TICK_MS : null };
   }
@@ -344,7 +389,10 @@ export class Room extends DurableObject<Env> {
     // while the player is away. A join resumes it (see onMessage). A spectator
     // alone does NOT keep the sim alive — only the seated player counts.
     if (game.seats[0] && !Object.values(conns).includes(game.seats[0])) {
-      game.state = logic.applyAction(game.state, (game.state as any).seat, { type: "pause", on: true });
+      game.state = logic.applyAction(game.state, (game.state as any).seat, {
+        type: "pause",
+        on: true,
+      });
       await this.save(game, conns);
       return { out: [], wakeIn: null };
     }
@@ -353,12 +401,60 @@ export class Room extends DurableObject<Env> {
     // out identical state. The action that unpauses re-arms the alarm.
     if ((game.state as any).paused) return { out: [], wakeIn: null };
 
+    // During a campaign encounter the siege/world simulation is frozen. A player
+    // can submit an explicit field order; otherwise this default advance keeps
+    // the battle moving and prevents a headless/older client from deadlocking.
+    if (game.campaignBattle?.status === "active") {
+      const battle = game.campaignBattle;
+      const nextBattle = stepCampaignBattle(
+        battle,
+        "advance",
+        enemyCampaignBattleOrder(battle),
+      );
+      game.campaignBattle = nextBattle;
+      if (nextBattle.status === "resolved") {
+        const state = game.state as any;
+        game.state = {
+          ...state,
+          world: reconcileCampaignBattle(state.world, nextBattle),
+        };
+      }
+      await this.save(game, conns);
+      return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
+    }
+
+    // The resolved snapshot is shown for one broadcast/tick, then normal
+    // campaign simulation resumes.
+    if (game.campaignBattle?.status === "resolved") {
+      game.campaignBattle = null;
+    }
+
     game.state = logic.tick(game.state);
     const end = logic.isGameOver(game.state);
     if (end.over) {
       game.status = "over";
       game.result = end;
     }
+
+    // Only start an overworld encounter if the base game is still live. The
+    // encounter freezes both armies' current paths before constructing battle
+    // state, ensuring repeated alarms cannot create duplicate encounters.
+    if (game.status === "playing") {
+      const state = game.state as any;
+      const encounter = detectWorldEncounter(state.world);
+      if (encounter) {
+        const world = {
+          ...state.world,
+          army: { ...state.world.army, path: null, wait: 0 },
+          lords: state.world.lords.map((lord: any) =>
+            lord.id === encounter.id ? { ...lord, path: null, wait: 0 } : { ...lord },
+          ),
+        };
+        game.state = { ...state, world };
+        game.campaignBattle = createCampaignBattle(world, encounter.id);
+      }
+    }
+
     await this.save(game, conns);
     // A finished game stops the loop; a live one keeps ticking.
     return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
