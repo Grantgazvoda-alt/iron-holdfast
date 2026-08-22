@@ -9,8 +9,20 @@ import {
   stepCampaignBattle,
   type CampaignBattle,
 } from "./campaign-battle.js";
+import {
+  applyCommanderAction,
+  commanderView,
+  isCommanderAction,
+  rewardCampaignBattle,
+} from "./campaign-progression";
 import { enemyCampaignBattleOrder, isCampaignBattleOrderAction } from "./campaign-room";
+import {
+  CAMPAIGN_SAVE_VERSION,
+  normalizeCampaignGame,
+  type PersistedCampaignGame,
+} from "./campaign-save";
 import * as logic from "./logic.js";
+import { freshProfile } from "./progression.js";
 import { parseClientMessage } from "./protocol";
 import {
   applyPaidWorldResupply,
@@ -24,16 +36,9 @@ import {
   isWorldAssaultAction,
   validateTownAssault,
 } from "./world-conquest";
+import { stepRivalStrategy } from "./world-lords";
 
-interface Game {
-  status: "waiting" | "playing" | "over";
-  seats: string[];
-  state: unknown;
-  result: unknown;
-  campaignBattle?: CampaignBattle | null;
-  claims?: Record<string, string>;
-}
-
+ type Game = PersistedCampaignGame;
 type Conns = Record<string, string>;
 interface Out {
   to: string | string[];
@@ -42,14 +47,17 @@ interface Out {
 type Dispatchable = Out[] | { out?: Out[]; wakeIn?: number | null } | void;
 
 export function freshGame(): Game {
-  return {
+  return normalizeCampaignGame({
+    saveVersion: CAMPAIGN_SAVE_VERSION,
     status: "waiting",
     seats: [],
     state: null,
     result: null,
     campaignBattle: null,
+    commander: null,
+    lastRewardedBattleId: null,
     claims: {},
-  };
+  });
 }
 
 export function resolveMeta(
@@ -79,15 +87,18 @@ export class Room extends DurableObject<Env> {
   }
 
   private async load(): Promise<{ game: Game; conns: Conns }> {
-    const [game, conns] = await Promise.all([
-      this.ctx.storage.get<Game>("game"),
+    const [storedGame, conns] = await Promise.all([
+      this.ctx.storage.get<unknown>("game"),
       this.ctx.storage.get<Conns>("conns"),
     ]);
-    return { game: game ?? freshGame(), conns: conns ?? {} };
+    return {
+      game: storedGame ? normalizeCampaignGame(storedGame) : freshGame(),
+      conns: conns ?? {},
+    };
   }
 
   private async save(game: Game, conns: Conns): Promise<void> {
-    await this.ctx.storage.put({ game, conns });
+    await this.ctx.storage.put({ game: normalizeCampaignGame(game), conns });
   }
 
   private broadcast(game: Game, conns: Conns): Out[] {
@@ -102,7 +113,9 @@ export class Room extends DurableObject<Env> {
         connected,
         view: game.state ? logic.viewFor(game.state, playerId) : null,
         result: game.result,
-        campaignBattle: game.campaignBattle ?? null,
+        campaignBattle: game.campaignBattle,
+        commander: game.commander ? commanderView(game.commander) : null,
+        saveVersion: game.saveVersion,
         meta: META,
       },
     }));
@@ -112,11 +125,6 @@ export class Room extends DurableObject<Env> {
     return [{ to: connId, data: { type: "error", error } }];
   }
 
-  /**
-   * Reconcile the legacy siege ending with the larger kingdom campaign.
-   * A destroyed enemy camp completes the regional siege but only the campaign
-   * outcome may declare total victory. Capital defeat still ends immediately.
-   */
   private settleEnd(game: Game): void {
     const baseEnd = logic.isGameOver(game.state);
     if (baseEnd.over) {
@@ -134,6 +142,18 @@ export class Room extends DurableObject<Env> {
       game.status = "over";
       game.result = campaignEnd;
     }
+  }
+
+  /** Reconcile casualties + grant progression once for this battle id. */
+  private finishCampaignBattle(game: Game, battle: CampaignBattle): void {
+    const state = game.state as any;
+    game.state = { ...state, world: reconcileCampaignBattle(state.world, battle) };
+    if (game.lastRewardedBattleId !== battle.id) {
+      const reward = rewardCampaignBattle(game.commander, battle);
+      game.commander = reward.profile;
+      game.lastRewardedBattleId = battle.id;
+    }
+    this.settleEnd(game);
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -175,7 +195,7 @@ export class Room extends DurableObject<Env> {
     if (conns[connId] === undefined) return;
     const seatedAs = conns[connId];
     delete conns[connId];
-    if (game.claims && game.claims[seatedAs] === connId) delete game.claims[seatedAs];
+    if (game.claims[seatedAs] === connId) delete game.claims[seatedAs];
     await this.save(game, conns);
     await this.dispatch(this.broadcast(game, conns));
   }
@@ -201,22 +221,23 @@ export class Room extends DurableObject<Env> {
     if (msg.type === "join") {
       const already = game.seats.includes(msg.playerId);
       if (already) {
-        const ownerConn = (game.claims ?? {})[msg.playerId];
+        const ownerConn = game.claims[msg.playerId];
         if (ownerConn && conns[ownerConn]) {
           return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
         }
       }
       conns[connId] = msg.playerId;
-      if (!game.claims) game.claims = {};
       if (!already && game.seats.length < META.maxPlayers) {
         game.seats.push(msg.playerId);
         game.claims[msg.playerId] = connId;
       } else if (already) {
         game.claims[msg.playerId] = connId;
       }
+      if (!game.commander && game.seats[0]) game.commander = freshProfile(game.seats[0]);
       if (game.status === "waiting" && game.seats.length >= META.minPlayers) {
-        game.state = stepWorldEconomy(logic.setup(game.seats));
+        game.state = stepRivalStrategy(stepWorldEconomy(logic.setup(game.seats)));
         game.campaignBattle = null;
+        game.lastRewardedBattleId = null;
         game.status = "playing";
       } else if (game.status === "playing" && game.state && (game.state as any).paused) {
         game.state = logic.applyAction(game.state, msg.playerId, { type: "pause", on: false });
@@ -230,7 +251,7 @@ export class Room extends DurableObject<Env> {
 
     if (msg.type === "action") {
       if (game.status !== "playing") return this.error(connId, "game is not in progress");
-      const owned = game.seats.includes(playerId) && game.claims?.[playerId] === connId;
+      const owned = game.seats.includes(playerId) && game.claims[playerId] === connId;
       if (!owned) return this.error(connId, "spectators cannot act");
 
       if (game.campaignBattle?.status === "active") {
@@ -244,13 +265,18 @@ export class Room extends DurableObject<Env> {
           enemyCampaignBattleOrder(battle),
         );
         game.campaignBattle = nextBattle;
-        if (nextBattle.status === "resolved") {
-          const state = game.state as any;
-          game.state = { ...state, world: reconcileCampaignBattle(state.world, nextBattle) };
-          this.settleEnd(game);
-        }
+        if (nextBattle.status === "resolved") this.finishCampaignBattle(game, nextBattle);
         await this.save(game, conns);
         return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
+      }
+
+      if (isCommanderAction(msg.action)) {
+        const current = game.commander ?? freshProfile(playerId);
+        const result = applyCommanderAction(current, msg.action);
+        if (!result.ok) return this.error(connId, result.error);
+        game.commander = result.profile;
+        await this.save(game, conns);
+        return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
       }
 
       const actionRecord =
@@ -280,20 +306,20 @@ export class Room extends DurableObject<Env> {
       game.state = logic.applyAction(game.state, playerId, msg.action);
       this.settleEnd(game);
       await this.save(game, conns);
-      return {
-        out: this.broadcast(game, conns),
-        wakeIn: game.status === "playing" ? TICK_MS : null,
-      };
+      return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
     }
 
-    if (!(game.seats.includes(playerId) && game.claims?.[playerId] === connId)) {
+    if (!(game.seats.includes(playerId) && game.claims[playerId] === connId)) {
       return this.error(connId, "spectators cannot reset");
     }
     const enough = game.seats.length >= META.minPlayers;
-    game.state = enough ? stepWorldEconomy(logic.setup(game.seats)) : null;
+    game.state = enough ? stepRivalStrategy(stepWorldEconomy(logic.setup(game.seats))) : null;
     game.status = enough ? "playing" : "waiting";
     game.result = null;
     game.campaignBattle = null;
+    game.lastRewardedBattleId = null;
+    // Commander progression intentionally survives a new campaign run.
+    if (!game.commander && game.seats[0]) game.commander = freshProfile(game.seats[0]);
     await this.save(game, conns);
     return { out: this.broadcast(game, conns), wakeIn: enough ? TICK_MS : null };
   }
@@ -320,18 +346,14 @@ export class Room extends DurableObject<Env> {
         enemyCampaignBattleOrder(battle),
       );
       game.campaignBattle = nextBattle;
-      if (nextBattle.status === "resolved") {
-        const state = game.state as any;
-        game.state = { ...state, world: reconcileCampaignBattle(state.world, nextBattle) };
-        this.settleEnd(game);
-      }
+      if (nextBattle.status === "resolved") this.finishCampaignBattle(game, nextBattle);
       await this.save(game, conns);
       return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
     }
 
     if (game.campaignBattle?.status === "resolved") game.campaignBattle = null;
 
-    game.state = stepWorldEconomy(logic.tick(game.state));
+    game.state = stepRivalStrategy(stepWorldEconomy(logic.tick(game.state)));
     this.settleEnd(game);
 
     if (game.status === "playing") {
