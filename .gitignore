@@ -1,4 +1,14 @@
 node_modules/
 dist/
 release/
+/android/
+/ios/
+mobile/www/
+mobile/store-assets/
+mobile/android/.gradle/
+mobile/android/**/build/
+mobile/ios/build/
+mobile/ios/IronHoldfast.xcodeproj/
+mobile/ios/IronHoldfast/www/
+mobile/ios/IronHoldfast/Assets.xcassets/AppIcon.appiconset/icon-*.png
 *.log

@@ -9,16 +9,18 @@
 
 // ── net (keep this) ────────────────────────────────────────────────────────
 
-const room = new URLSearchParams(location.search).get("room") || "main";
+import { playerId, roomId } from "./session.js";
 
-function playerId() {
-  const key = "hf:game:playerId";
-  let id = localStorage.getItem(key);
-  if (!id) {
-    id = Math.random().toString(36).slice(2, 10);
-    localStorage.setItem(key, id);
-  }
-  return id;
+const player = playerId();
+const room = roomId();
+
+// A queryless solo install owns a stable private room. Explicit ?room= links
+// remain available for deliberate QA/shared-room scenarios. Keep Battle Mode
+// on the same room and replace the legacy inline fallback to global "main".
+const battleLink = document.getElementById("btnBattle");
+if (battleLink) {
+  battleLink.removeAttribute("onclick");
+  battleLink.href = `/battle.html?room=${encodeURIComponent(room)}`;
 }
 
 const PING = "__ping";
@@ -35,7 +37,7 @@ function connect() {
   socket = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(room)}`);
   socket.addEventListener("open", () => {
     retry = 0;
-    send({ type: "join", playerId: playerId() });
+    send({ type: "join", playerId: player });
   });
   socket.addEventListener("message", (event) => {
     if (event.data === PONG) return;
@@ -175,7 +177,7 @@ function diffState(old) {
 
 function onError(err) {
   toast(err || "server error", "danger");
-  if (err === "join first") send({ type: "join", playerId: playerId() });
+  if (err === "join first") send({ type: "join", playerId: player });
 }
 
 function toast(text, kind) {

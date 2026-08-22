@@ -1,17 +1,10 @@
-const room = new URLSearchParams(location.search).get("room") || "main";
+import { playerId, roomId } from "./session.js";
+
+const player = playerId();
+const room = roomId();
 const $ = (id) => document.getElementById(id);
 const canvas = $("battle");
 const ctx = canvas.getContext("2d");
-
-function playerId() {
-  const key = "hf:game:playerId";
-  let id = localStorage.getItem(key);
-  if (!id) {
-    id = Math.random().toString(36).slice(2, 10);
-    localStorage.setItem(key, id);
-  }
-  return id;
-}
 
 let socket;
 let retry = 0;
@@ -36,7 +29,7 @@ function connect() {
   socket.addEventListener("open", () => {
     retry = 0;
     $("status").textContent = "Live siege";
-    socket.send(JSON.stringify({ type: "join", playerId: playerId() }));
+    socket.send(JSON.stringify({ type: "join", playerId: player }));
   });
   socket.addEventListener("message", (event) => {
     if (event.data === "__pong") return;
@@ -48,7 +41,7 @@ function connect() {
       updateHud();
     } else if (msg.type === "error") {
       flash(msg.error || "Server rejected action");
-      if (msg.error === "join first") socket.send(JSON.stringify({ type: "join", playerId: playerId() }));
+      if (msg.error === "join first") socket.send(JSON.stringify({ type: "join", playerId: player }));
     }
   });
   socket.addEventListener("close", () => {
@@ -288,5 +281,9 @@ $("lookPad").addEventListener("pointerdown",(e)=>{ lookPointer=e.pointerId; last
 $("lookPad").addEventListener("pointermove",(e)=>{ if(e.pointerId!==lookPointer||!lastLook)return; yaw+=(e.clientX-lastLook.x)*.006; pitch=Math.max(-.65,Math.min(.65,pitch+(e.clientY-lastLook.y)*.004)); lastLook={x:e.clientX,y:e.clientY}; });
 function endLook(e){ if(e.pointerId===lookPointer){lookPointer=null;lastLook=null;} }
 $("lookPad").addEventListener("pointerup",endLook); $("lookPad").addEventListener("pointercancel",endLook);
+
+$("return").addEventListener("click", () => {
+  location.href = `/?room=${encodeURIComponent(room)}`;
+});
 
 connect();
