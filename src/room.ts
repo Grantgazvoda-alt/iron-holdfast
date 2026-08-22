@@ -17,6 +17,16 @@ import {
 } from "./campaign-progression";
 import { enemyCampaignBattleOrder, isCampaignBattleOrderAction } from "./campaign-room";
 import {
+  CAMPAIGN_COSMETICS,
+  cosmeticAvailability,
+} from "./campaign-cosmetics";
+import {
+  CAMPAIGN_DIFFICULTIES,
+  applyCampaignDifficulty,
+  isCampaignDifficultyAction,
+} from "./campaign-difficulty";
+import { retentionView } from "./campaign-retention";
+import {
   CAMPAIGN_SAVE_VERSION,
   normalizeCampaignGame,
   type PersistedCampaignGame,
@@ -38,7 +48,7 @@ import {
 } from "./world-conquest";
 import { stepRivalStrategy } from "./world-lords";
 
- type Game = PersistedCampaignGame;
+type Game = PersistedCampaignGame;
 type Conns = Record<string, string>;
 interface Out {
   to: string | string[];
@@ -56,6 +66,7 @@ export function freshGame(): Game {
     campaignBattle: null,
     commander: null,
     lastRewardedBattleId: null,
+    difficulty: "standard",
     claims: {},
   });
 }
@@ -101,8 +112,25 @@ export class Room extends DurableObject<Env> {
     await this.ctx.storage.put({ game: normalizeCampaignGame(game), conns });
   }
 
+  private freshCampaignState(game: Game): unknown {
+    const seeded = logic.setup(game.seats);
+    const difficultyApplied = applyCampaignDifficulty(seeded, game.difficulty);
+    return stepRivalStrategy(stepWorldEconomy(difficultyApplied));
+  }
+
   private broadcast(game: Game, conns: Conns): Out[] {
     const connected = Object.keys(conns).length;
+    const retention = retentionView(game.state, game.commander, game.result);
+    const earnedAchievementIds = retention.achievements
+      .filter((achievement) => achievement.earned)
+      .map((achievement) => achievement.id);
+    const cosmetics = cosmeticAvailability(game.commander, earnedAchievementIds);
+    const difficultyOptions = Object.values(CAMPAIGN_DIFFICULTIES).map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      description: profile.description,
+    }));
+
     return Object.entries(conns).map(([connId, playerId]) => ({
       to: connId,
       data: {
@@ -115,6 +143,11 @@ export class Room extends DurableObject<Env> {
         result: game.result,
         campaignBattle: game.campaignBattle,
         commander: game.commander ? commanderView(game.commander) : null,
+        retention,
+        cosmetics,
+        cosmeticCatalogSize: CAMPAIGN_COSMETICS.length,
+        difficulty: game.difficulty,
+        difficultyOptions,
         saveVersion: game.saveVersion,
         meta: META,
       },
@@ -144,7 +177,6 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  /** Reconcile casualties + grant progression once for this battle id. */
   private finishCampaignBattle(game: Game, battle: CampaignBattle): void {
     const state = game.state as any;
     game.state = { ...state, world: reconcileCampaignBattle(state.world, battle) };
@@ -183,7 +215,7 @@ export class Room extends DurableObject<Env> {
       try {
         ws.send(JSON.stringify({ type: "error", error: "server error" }));
       } catch {
-        /* closed */
+        /* socket already closed */
       }
     }
   }
@@ -235,7 +267,7 @@ export class Room extends DurableObject<Env> {
       }
       if (!game.commander && game.seats[0]) game.commander = freshProfile(game.seats[0]);
       if (game.status === "waiting" && game.seats.length >= META.minPlayers) {
-        game.state = stepRivalStrategy(stepWorldEconomy(logic.setup(game.seats)));
+        game.state = this.freshCampaignState(game);
         game.campaignBattle = null;
         game.lastRewardedBattleId = null;
         game.status = "playing";
@@ -267,7 +299,23 @@ export class Room extends DurableObject<Env> {
         game.campaignBattle = nextBattle;
         if (nextBattle.status === "resolved") this.finishCampaignBattle(game, nextBattle);
         await this.save(game, conns);
-        return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
+        return {
+          out: this.broadcast(game, conns),
+          wakeIn: game.status === "playing" ? TICK_MS : null,
+        };
+      }
+
+      if (isCampaignDifficultyAction(msg.action)) {
+        // Difficulty changes explicitly begin a fresh kingdom run while keeping
+        // the earned commander profile. No hidden mid-battle stat mutation.
+        game.difficulty = msg.action.difficulty;
+        game.state = this.freshCampaignState(game);
+        game.status = "playing";
+        game.result = null;
+        game.campaignBattle = null;
+        game.lastRewardedBattleId = null;
+        await this.save(game, conns);
+        return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
       }
 
       if (isCommanderAction(msg.action)) {
@@ -298,7 +346,10 @@ export class Room extends DurableObject<Env> {
         game.state = applyTownAssault(game.state).state;
         this.settleEnd(game);
         await this.save(game, conns);
-        return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
+        return {
+          out: this.broadcast(game, conns),
+          wakeIn: game.status === "playing" ? TICK_MS : null,
+        };
       }
 
       const verdict = logic.validateAction(game.state, playerId, msg.action);
@@ -306,14 +357,17 @@ export class Room extends DurableObject<Env> {
       game.state = logic.applyAction(game.state, playerId, msg.action);
       this.settleEnd(game);
       await this.save(game, conns);
-      return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
+      return {
+        out: this.broadcast(game, conns),
+        wakeIn: game.status === "playing" ? TICK_MS : null,
+      };
     }
 
     if (!(game.seats.includes(playerId) && game.claims[playerId] === connId)) {
       return this.error(connId, "spectators cannot reset");
     }
     const enough = game.seats.length >= META.minPlayers;
-    game.state = enough ? stepRivalStrategy(stepWorldEconomy(logic.setup(game.seats))) : null;
+    game.state = enough ? this.freshCampaignState(game) : null;
     game.status = enough ? "playing" : "waiting";
     game.result = null;
     game.campaignBattle = null;
@@ -348,7 +402,10 @@ export class Room extends DurableObject<Env> {
       game.campaignBattle = nextBattle;
       if (nextBattle.status === "resolved") this.finishCampaignBattle(game, nextBattle);
       await this.save(game, conns);
-      return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
+      return {
+        out: this.broadcast(game, conns),
+        wakeIn: game.status === "playing" ? TICK_MS : null,
+      };
     }
 
     if (game.campaignBattle?.status === "resolved") game.campaignBattle = null;
@@ -373,7 +430,10 @@ export class Room extends DurableObject<Env> {
     }
 
     await this.save(game, conns);
-    return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
+    return {
+      out: this.broadcast(game, conns),
+      wakeIn: game.status === "playing" ? TICK_MS : null,
+    };
   }
 
   private async dispatch(res: Dispatchable): Promise<void> {
@@ -384,24 +444,24 @@ export class Room extends DurableObject<Env> {
     if (msgs.length) {
       const sockets = this.ctx.getWebSockets();
       const byId = new Map<string, WebSocket>();
-      for (const s of sockets) {
-        const id = this.connIdOf(s);
-        if (id) byId.set(id, s);
+      for (const socket of sockets) {
+        const id = this.connIdOf(socket);
+        if (id) byId.set(id, socket);
       }
-      for (const m of msgs) {
-        if (!m) continue;
-        const data = typeof m.data === "string" ? m.data : JSON.stringify(m.data);
+      for (const msg of msgs) {
+        if (!msg) continue;
+        const data = typeof msg.data === "string" ? msg.data : JSON.stringify(msg.data);
         const targets =
-          m.to === "*"
+          msg.to === "*"
             ? sockets
-            : Array.isArray(m.to)
-              ? m.to.map((id) => byId.get(id)).filter((s): s is WebSocket => Boolean(s))
-              : [byId.get(m.to)].filter((s): s is WebSocket => Boolean(s));
-        for (const t of targets) {
+            : Array.isArray(msg.to)
+              ? msg.to.map((id) => byId.get(id)).filter((s): s is WebSocket => Boolean(s))
+              : [byId.get(msg.to)].filter((s): s is WebSocket => Boolean(s));
+        for (const target of targets) {
           try {
-            t.send(data);
+            target.send(data);
           } catch {
-            /* closed mid-fanout */
+            /* socket closed mid-fanout */
           }
         }
       }
