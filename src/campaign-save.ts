@@ -1,7 +1,11 @@
 import type { CampaignBattle } from "./campaign-battle.js";
+import {
+  normalizeCampaignDifficulty,
+  type CampaignDifficulty,
+} from "./campaign-difficulty";
 import { freshProfile, normalizeProfile, type CommanderProfile } from "./progression.js";
 
-export const CAMPAIGN_SAVE_VERSION = 1;
+export const CAMPAIGN_SAVE_VERSION = 2;
 
 export interface PersistedCampaignGame {
   saveVersion: number;
@@ -12,6 +16,7 @@ export interface PersistedCampaignGame {
   campaignBattle: CampaignBattle | null;
   commander: CommanderProfile | null;
   lastRewardedBattleId: string | null;
+  difficulty: CampaignDifficulty;
   claims: Record<string, string>;
 }
 
@@ -47,6 +52,7 @@ export function normalizeCampaignGame(raw: any): PersistedCampaignGame {
     commander,
     lastRewardedBattleId:
       typeof raw?.lastRewardedBattleId === "string" ? raw.lastRewardedBattleId : null,
+    difficulty: normalizeCampaignDifficulty(raw?.difficulty),
     claims,
   };
 }
@@ -69,6 +75,7 @@ export function exportCampaignSnapshot(game: PersistedCampaignGame) {
     campaignBattle: normalized.campaignBattle,
     commander: normalized.commander,
     lastRewardedBattleId: normalized.lastRewardedBattleId,
+    difficulty: normalized.difficulty,
   };
 }
 
@@ -81,7 +88,8 @@ export function importCampaignSnapshot(raw: any, seatId: string): PersistedCampa
     throw new Error("campaign snapshot is from a newer game version");
   }
 
-  // Version 0 is the pre-versioning shape: state/result/campaignBattle/commander.
+  // v0/v1 snapshots had no required difficulty field; normalize defaults them
+  // to Standard while preserving every deterministic game-state field.
   const migrated = {
     saveVersion: CAMPAIGN_SAVE_VERSION,
     status: raw.status,
@@ -91,6 +99,7 @@ export function importCampaignSnapshot(raw: any, seatId: string): PersistedCampa
     campaignBattle: raw.campaignBattle ?? null,
     commander: raw.commander ?? freshProfile(seatId),
     lastRewardedBattleId: raw.lastRewardedBattleId ?? null,
+    difficulty: raw.difficulty ?? "standard",
     claims: {},
   };
   return normalizeCampaignGame(migrated);
@@ -103,6 +112,7 @@ export function campaignSnapshotSummary(raw: any) {
   return {
     version: game.saveVersion,
     status: game.status,
+    difficulty: game.difficulty,
     tick: Number(game.state?.time ?? 0),
     day: Number(world?.day ?? 0),
     armyTroops: Number(world?.army?.troops ?? 0),
