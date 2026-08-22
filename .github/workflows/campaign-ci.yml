@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Set up Bun for Bun-native balance tests
+      - name: Set up Bun for build and Bun-native tests
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -41,14 +41,21 @@ jobs:
       - name: Strict production TypeScript
         run: npx tsc --noEmit -p tsconfig.ci.json
 
+      - name: Build Worker and static bundle
+        run: bun run scripts/build.mjs
+
       - name: Run Cloudflare/Vitest suites
-        run: npx vitest run --exclude tests/balance.test.ts
+        run: >-
+          npx vitest run
+          --exclude tests/balance.test.ts
+          --exclude 'tests/*.mjs'
+          --exclude tests/campaign-ui.test.ts
+
+      - name: Run Node/Vitest static campaign UI suite
+        run: npx vitest run tests/campaign-ui.test.ts --config vitest.node.config.ts
 
       - name: Run Bun-native balance regression suite
         run: bun test tests/balance.test.ts
-
-      - name: Build production bundle
-        run: node scripts/build.mjs
 
       - name: Validate campaign/mobile browser scripts
         run: |
