@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun run check:logic && tsc --noEmit && bun run scripts/build.mjs",
+    "build": "bun run check:logic && tsc --noEmit -p tsconfig.ci.json && bun run scripts/build.mjs",
     "dev": "wrangler dev",
-    "test": "vitest run tests/",
-    "typecheck": "tsc --noEmit",
+    "test": "bun run test:vitest && bun run test:balance",
+    "test:vitest": "vitest run --exclude tests/balance.test.ts",
+    "test:balance": "bun test tests/balance.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.ci.json",
     "check:logic": "bun run scripts/check-logic.mjs",
     "mobile:prepare": "node scripts/prepare-mobile.mjs"
   },
