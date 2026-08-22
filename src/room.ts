@@ -1,36 +1,4 @@
-/**
- * `Room` — one multiplayer room, as a Durable Object.
- *
- * A room owns its players' WebSockets and all game state. One DO instance per
- * room id (`env.ROOMS.idFromName(room)`), so two rooms never share state and an
- * idle room costs nothing (see HIBERNATION below).
- *
- * This file is the TRUSTED half of the game: it speaks the wire protocol, owns
- * the sockets, and persists state. It calls `./logic.js` — the game-specific
- * half, six pure functions — for every game decision. Editing a game means
- * editing `logic.js`; you should rarely need to touch this file.
- *
- * ── WIRE PROTOCOL (unchanged from the previous games engine) ─────────────
- *   in:  {type:"join", playerId} | {type:"action", action} | {type:"reset"}
- *   out: {type:"state", status, seats, you, connected, view, result, meta}
- *        {type:"error", error}
- *
- * ── logic.js CONTRACT (pure functions over JSON state) ───────────────────
- *   meta {game, minPlayers, maxPlayers}
- *   setup(players) · validateAction(state, playerId, action)
- *   applyAction(state, playerId, action) · isGameOver(state)
- *   viewFor(state, playerId)
- *
- * ── HIBERNATION ─────────────────────────────────────────────────────────
- * Sockets are accepted with `ctx.acceptWebSocket`, so a room with no traffic is
- * evicted from memory while its connections STAY OPEN, and is revived on the
- * next message. An idle room therefore bills no duration. Two consequences:
- *   * never keep game state in instance fields — it will not survive eviction.
- *     Everything lives in `ctx.storage` (SQLite-backed, per room).
- *   * a connection's identity rides on the socket itself
- *     (`serializeAttachment`), because an in-memory map does not survive.
- */
-
+/** `Room` — server-authoritative, persisted real-time game room. */
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "./env";
@@ -49,39 +17,30 @@ import {
   stepWorldEconomy,
   validatePaidWorldResupply,
 } from "./world-economy";
+import {
+  applyTownAssault,
+  campaignOutcome,
+  continueAfterRegionalVictory,
+  isWorldAssaultAction,
+  validateTownAssault,
+} from "./world-conquest";
 
-/** Server-authoritative room state. Persisted; `view` is derived per player. */
 interface Game {
-  /** waiting = not enough players yet · playing · over */
   status: "waiting" | "playing" | "over";
-  /** playerIds in join order; the first `maxPlayers` get seats, the rest spectate. */
   seats: string[];
-  /** Whatever `logic.setup()` returned, advanced by `logic.applyAction()`. */
   state: unknown;
-  /** Whatever `logic.isGameOver()` returned once it ended. */
   result: unknown;
-  /** Active/resolved overworld army encounter. Persisted across hibernation. */
   campaignBattle?: CampaignBattle | null;
-  /**
-   * playerId -> connId of the connection that claimed that seat. Persisted so
-   * socket ownership survives hibernation; used to refuse seat hijacking.
-   */
   claims?: Record<string, string>;
 }
 
-/** connId -> playerId. Persisted: the sockets outlive this object's memory. */
 type Conns = Record<string, string>;
-
-/** One outbound message. `to` is a connId, a list of them, or "*" for everyone. */
 interface Out {
   to: string | string[];
   data: unknown;
 }
-
-/** What a handler may return: messages, or messages plus an alarm request. */
 type Dispatchable = Out[] | { out?: Out[]; wakeIn?: number | null } | void;
 
-/** A brand-new room state. */
 export function freshGame(): Game {
   return {
     status: "waiting",
@@ -100,17 +59,12 @@ export function resolveMeta(
   const players = Array.isArray(meta.players) ? (meta.players as unknown[]) : [];
   const seats = (value: unknown, fallback: number): number =>
     Number.isInteger(value) && (value as number) >= 1 ? (value as number) : fallback;
-
   const minPlayers = seats(meta.minPlayers, seats(players[0], 1));
   const maxPlayers = seats(meta.maxPlayers, seats(players[1], minPlayers));
   const named = [meta.game, meta.name, meta.title].find(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
-  return {
-    game: named ?? "Game",
-    minPlayers,
-    maxPlayers: Math.max(minPlayers, maxPlayers),
-  };
+  return { game: named ?? "Game", minPlayers, maxPlayers: Math.max(minPlayers, maxPlayers) };
 }
 
 const META = resolveMeta(logic.meta);
@@ -158,6 +112,30 @@ export class Room extends DurableObject<Env> {
     return [{ to: connId, data: { type: "error", error } }];
   }
 
+  /**
+   * Reconcile the legacy siege ending with the larger kingdom campaign.
+   * A destroyed enemy camp completes the regional siege but only the campaign
+   * outcome may declare total victory. Capital defeat still ends immediately.
+   */
+  private settleEnd(game: Game): void {
+    const baseEnd = logic.isGameOver(game.state);
+    if (baseEnd.over) {
+      const result = (baseEnd as Record<string, unknown>).result;
+      if (result === "victory" && (game.state as any)?.world) {
+        game.state = continueAfterRegionalVictory(game.state);
+      } else {
+        game.status = "over";
+        game.result = baseEnd;
+        return;
+      }
+    }
+    const campaignEnd = campaignOutcome(game.state);
+    if (campaignEnd.over) {
+      game.status = "over";
+      game.result = campaignEnd;
+    }
+  }
+
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected a websocket upgrade", { status: 426 });
@@ -185,7 +163,7 @@ export class Room extends DurableObject<Env> {
       try {
         ws.send(JSON.stringify({ type: "error", error: "server error" }));
       } catch {
-        /* socket already gone */
+        /* closed */
       }
     }
   }
@@ -197,9 +175,7 @@ export class Room extends DurableObject<Env> {
     if (conns[connId] === undefined) return;
     const seatedAs = conns[connId];
     delete conns[connId];
-    if (game.claims && game.claims[seatedAs] === connId) {
-      delete game.claims[seatedAs];
-    }
+    if (game.claims && game.claims[seatedAs] === connId) delete game.claims[seatedAs];
     await this.save(game, conns);
     await this.dispatch(this.broadcast(game, conns));
   }
@@ -225,8 +201,7 @@ export class Room extends DurableObject<Env> {
     if (msg.type === "join") {
       const already = game.seats.includes(msg.playerId);
       if (already) {
-        const claims = game.claims ?? {};
-        const ownerConn = claims[msg.playerId];
+        const ownerConn = (game.claims ?? {})[msg.playerId];
         if (ownerConn && conns[ownerConn]) {
           return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
         }
@@ -271,13 +246,11 @@ export class Room extends DurableObject<Env> {
         game.campaignBattle = nextBattle;
         if (nextBattle.status === "resolved") {
           const state = game.state as any;
-          game.state = {
-            ...state,
-            world: reconcileCampaignBattle(state.world, nextBattle),
-          };
+          game.state = { ...state, world: reconcileCampaignBattle(state.world, nextBattle) };
+          this.settleEnd(game);
         }
         await this.save(game, conns);
-        return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
+        return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
       }
 
       const actionRecord =
@@ -285,9 +258,6 @@ export class Room extends DurableObject<Env> {
           ? (msg.action as Record<string, unknown>)
           : null;
 
-      // Override Slice-1's free resupply path at the trusted boundary. The old
-      // client action remains compatible, but every refill now costs treasury
-      // gold according to world-economy.ts.
       if (actionRecord?.type === "world_resupply") {
         const verdict = validatePaidWorldResupply(game.state);
         if (!verdict.ok) return this.error(connId, verdict.error);
@@ -296,14 +266,19 @@ export class Room extends DurableObject<Env> {
         return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
       }
 
+      if (isWorldAssaultAction(msg.action)) {
+        const verdict = validateTownAssault(game.state);
+        if (!verdict.ok) return this.error(connId, verdict.error);
+        game.state = applyTownAssault(game.state).state;
+        this.settleEnd(game);
+        await this.save(game, conns);
+        return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
+      }
+
       const verdict = logic.validateAction(game.state, playerId, msg.action);
       if (!verdict.ok) return this.error(connId, verdict.error ?? "invalid action");
       game.state = logic.applyAction(game.state, playerId, msg.action);
-      const end = logic.isGameOver(game.state);
-      if (end.over) {
-        game.status = "over";
-        game.result = end;
-      }
+      this.settleEnd(game);
       await this.save(game, conns);
       return {
         out: this.broadcast(game, conns),
@@ -335,7 +310,6 @@ export class Room extends DurableObject<Env> {
       await this.save(game, conns);
       return { out: [], wakeIn: null };
     }
-
     if ((game.state as any).paused) return { out: [], wakeIn: null };
 
     if (game.campaignBattle?.status === "active") {
@@ -348,27 +322,17 @@ export class Room extends DurableObject<Env> {
       game.campaignBattle = nextBattle;
       if (nextBattle.status === "resolved") {
         const state = game.state as any;
-        game.state = {
-          ...state,
-          world: reconcileCampaignBattle(state.world, nextBattle),
-        };
+        game.state = { ...state, world: reconcileCampaignBattle(state.world, nextBattle) };
+        this.settleEnd(game);
       }
       await this.save(game, conns);
-      return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
+      return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
     }
 
-    if (game.campaignBattle?.status === "resolved") {
-      game.campaignBattle = null;
-    }
+    if (game.campaignBattle?.status === "resolved") game.campaignBattle = null;
 
-    // The base deterministic game advances first. Kingdom taxes are then
-    // derived from the resulting world day and recorded exactly once.
     game.state = stepWorldEconomy(logic.tick(game.state));
-    const end = logic.isGameOver(game.state);
-    if (end.over) {
-      game.status = "over";
-      game.result = end;
-    }
+    this.settleEnd(game);
 
     if (game.status === "playing") {
       const state = game.state as any;
@@ -415,7 +379,7 @@ export class Room extends DurableObject<Env> {
           try {
             t.send(data);
           } catch {
-            /* socket closed mid-fan-out; its close handler will clean up */
+            /* closed mid-fanout */
           }
         }
       }
