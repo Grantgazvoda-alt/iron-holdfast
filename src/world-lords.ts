@@ -45,8 +45,9 @@ export function strategicPath(
     let current = -1;
     let best = Infinity;
     for (let i = 0; i < size; i++) {
-      if (!visited[i] && dist[i] < best) {
-        best = dist[i];
+      const value = dist[i] ?? Infinity;
+      if (!(visited[i] ?? false) && value < best) {
+        best = value;
         current = i;
       }
     }
@@ -54,6 +55,7 @@ export function strategicPath(
     visited[current] = true;
     const x = current % width;
     const y = Math.floor(current / width);
+    const currentDistance = dist[current] ?? Infinity;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const nx = x + dx;
       const ny = y + dy;
@@ -61,20 +63,21 @@ export function strategicPath(
       const next = index(nx, ny);
       const cost = terrainRouteCost(world.cells[next]);
       if (!Number.isFinite(cost)) continue;
-      const candidate = dist[current] + cost;
-      if (candidate < dist[next]) {
+      const candidate = currentDistance + cost;
+      const nextDistance = dist[next] ?? Infinity;
+      if (candidate < nextDistance) {
         dist[next] = candidate;
         prev[next] = current;
       }
     }
   }
 
-  if (!Number.isFinite(dist[target])) return null;
+  if (!Number.isFinite(dist[target] ?? Infinity)) return null;
   const path: number[][] = [];
   let cursor = target;
   while (cursor !== start && cursor !== -1) {
     path.unshift([cursor % width, Math.floor(cursor / width)]);
-    cursor = prev[cursor];
+    cursor = prev[cursor] ?? -1;
   }
   return cursor === start ? path : null;
 }
