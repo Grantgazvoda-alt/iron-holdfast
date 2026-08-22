@@ -44,6 +44,11 @@ import {
 import { enemyCampaignBattleOrder, isCampaignBattleOrderAction } from "./campaign-room";
 import * as logic from "./logic.js";
 import { parseClientMessage } from "./protocol";
+import {
+  applyPaidWorldResupply,
+  stepWorldEconomy,
+  validatePaidWorldResupply,
+} from "./world-economy";
 
 /** Server-authoritative room state. Persisted; `view` is derived per player. */
 interface Game {
@@ -76,14 +81,7 @@ interface Out {
 /** What a handler may return: messages, or messages plus an alarm request. */
 type Dispatchable = Out[] | { out?: Out[]; wakeIn?: number | null } | void;
 
-/**
- * A brand-new room state.
- *
- * This MUST be a factory, never a shared constant: Durable Object instances of
- * the same class share one isolate, so a module-level `{...DEFAULT}` spread would
- * hand every room the SAME `seats` array (a spread is shallow) and one room's
- * `seats.push()` would leak into every other room that had not saved yet.
- */
+/** A brand-new room state. */
 export function freshGame(): Game {
   return {
     status: "waiting",
@@ -95,19 +93,6 @@ export function freshGame(): Game {
   };
 }
 
-/**
- * The meta the room can actually rely on.
- *
- * Seating consults `minPlayers`/`maxPlayers` on every join, and `undefined`
- * there fails silently in the worst way: `seats.length < undefined` is false, so
- * NOBODY is ever seated and the room waits forever. That makes trusting the
- * declared shape a bad bet.
- *
- * Games carried over from the previous engine were written against a looser
- * contract — many name the game with `name` (or `title`) rather than `game`, and
- * a few carry `players: [min, max]` instead of the two fields. They ran fine
- * there, so normalise once here rather than refusing to run them.
- */
 export function resolveMeta(
   raw: unknown,
 ): { game: string; minPlayers: number; maxPlayers: number } {
@@ -124,34 +109,20 @@ export function resolveMeta(
   return {
     game: named ?? "Game",
     minPlayers,
-    // A declared max below the min would wedge the room the same way.
     maxPlayers: Math.max(minPlayers, maxPlayers),
   };
 }
 
 const META = resolveMeta(logic.meta);
-
-/** Real-time step: the room wakes every TICK_MS and advances the sim once. */
 const TICK_MS = 500;
-
-/**
- * Keepalive. Idle WebSockets get dropped by intermediaries after a few minutes;
- * the runtime answers these ping frames WITHOUT waking the room, so a quiet room
- * stays connected and still costs nothing. (The previous engine lacked this,
- * which is why long-idle games silently lost their sockets.)
- */
 const PING = "__ping";
 const PONG = "__pong";
 
 export class Room extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // Registered on every construction (cheap, idempotent) rather than on first
-    // connect, so a room revived from hibernation keeps answering pings.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
   }
-
-  // ── persistence ────────────────────────────────────────────────────────
 
   private async load(): Promise<{ game: Game; conns: Conns }> {
     const [game, conns] = await Promise.all([
@@ -165,9 +136,6 @@ export class Room extends DurableObject<Env> {
     await this.ctx.storage.put({ game, conns });
   }
 
-  // ── protocol helpers ───────────────────────────────────────────────────
-
-  /** Everyone's view of the room. Each player sees only `viewFor(state, them)`. */
   private broadcast(game: Game, conns: Conns): Out[] {
     const connected = Object.keys(conns).length;
     return Object.entries(conns).map(([connId, playerId]) => ({
@@ -190,24 +158,14 @@ export class Room extends DurableObject<Env> {
     return [{ to: connId, data: { type: "error", error } }];
   }
 
-  // ── connection lifecycle ───────────────────────────────────────────────
-
-  /**
-   * The only entry point: a WebSocket upgrade routed here by the Worker
-   * (`/ws/<room>`). Anything else is a routing bug in the Worker, not a client
-   * error, so it fails loudly rather than quietly serving something.
-   */
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected a websocket upgrade", { status: 426 });
     }
     const pair = new WebSocketPair();
     const server = pair[1]!;
-    // Hibernatable accept (NOT server.accept()): the room may be evicted while
-    // this socket stays open.
     this.ctx.acceptWebSocket(server);
     const connId = crypto.randomUUID().slice(0, 8);
-    // The connId must survive eviction — the socket carries it.
     server.serializeAttachment({ connId });
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
@@ -223,9 +181,6 @@ export class Room extends DurableObject<Env> {
     try {
       await this.dispatch(await this.onMessage(connId, raw));
     } catch (err) {
-      // A throw here is almost always a bug in logic.js. Tell that one client
-      // instead of killing the room for everybody. The reason stays server-side:
-      // it can carry internals, and the client can't act on it anyway.
       console.error("room message failed:", err instanceof Error ? err.stack : String(err));
       try {
         ws.send(JSON.stringify({ type: "error", error: "server error" }));
@@ -242,13 +197,10 @@ export class Room extends DurableObject<Env> {
     if (conns[connId] === undefined) return;
     const seatedAs = conns[connId];
     delete conns[connId];
-    // Release the seat claim if this connection owned it — the slot frees up
-    // for a genuine reconnect, and a stale claim never blocks a fresh join.
     if (game.claims && game.claims[seatedAs] === connId) {
       delete game.claims[seatedAs];
     }
     await this.save(game, conns);
-    // Tell the remaining players the room got smaller.
     await this.dispatch(this.broadcast(game, conns));
   }
 
@@ -256,10 +208,6 @@ export class Room extends DurableObject<Env> {
     await this.webSocketClose(ws);
   }
 
-  /**
-   * Timer tick, requested by a handler returning `wakeIn`. The turn-based kernel
-   * never schedules one; real-time games (countdowns, tick loops) do.
-   */
   override async alarm(): Promise<void> {
     try {
       await this.dispatch(await this.onWake());
@@ -268,28 +216,18 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  // ── game semantics (the previous engine's kernel, behaviour preserved) ──
-
   private async onMessage(connId: string, raw: string | ArrayBuffer): Promise<Dispatchable> {
-    // Untrusted frame: validated before anything reads it (see ./protocol).
     const parsed = parseClientMessage(raw);
     if (!parsed.ok) return this.error(connId, parsed.error);
     const msg = parsed.msg;
-
     const { game, conns } = await this.load();
 
-    // A client introduces itself before it may act. Re-joining with the same
-    // playerId reclaims that seat — but ONLY when the previous owner's
-    // connection is gone (a genuine reconnect), never while that soul is
-    // still connected (which would let a second socket seize the solo seat).
     if (msg.type === "join") {
       const already = game.seats.includes(msg.playerId);
       if (already) {
         const claims = game.claims ?? {};
         const ownerConn = claims[msg.playerId];
         if (ownerConn && conns[ownerConn]) {
-          // the current owner is still connected — this join is an impostor:
-          // seat it nowhere, treat it as a spectator
           return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
         }
       }
@@ -299,15 +237,13 @@ export class Room extends DurableObject<Env> {
         game.seats.push(msg.playerId);
         game.claims[msg.playerId] = connId;
       } else if (already) {
-        // legitimate reclaim: ownership transfers to the new connection
         game.claims[msg.playerId] = connId;
       }
       if (game.status === "waiting" && game.seats.length >= META.minPlayers) {
-        game.state = logic.setup(game.seats);
+        game.state = stepWorldEconomy(logic.setup(game.seats));
         game.campaignBattle = null;
         game.status = "playing";
       } else if (game.status === "playing" && game.state && (game.state as any).paused) {
-        // the player is back — resume an auto-paused solo game
         game.state = logic.applyAction(game.state, msg.playerId, { type: "pause", on: false });
       }
       await this.save(game, conns);
@@ -322,8 +258,6 @@ export class Room extends DurableObject<Env> {
       const owned = game.seats.includes(playerId) && game.claims?.[playerId] === connId;
       if (!owned) return this.error(connId, "spectators cannot act");
 
-      // A world encounter is a server-owned state transition. While one is
-      // active, ordinary siege/world actions cannot mutate the frozen campaign.
       if (game.campaignBattle?.status === "active") {
         if (!isCampaignBattleOrderAction(msg.action)) {
           return this.error(connId, "campaign battle requires a field order");
@@ -346,8 +280,22 @@ export class Room extends DurableObject<Env> {
         return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
       }
 
-      // logic.js is the authority on whether an action is legal, and it is
-      // consulted BEFORE any state is written.
+      const actionRecord =
+        typeof msg.action === "object" && msg.action !== null && !Array.isArray(msg.action)
+          ? (msg.action as Record<string, unknown>)
+          : null;
+
+      // Override Slice-1's free resupply path at the trusted boundary. The old
+      // client action remains compatible, but every refill now costs treasury
+      // gold according to world-economy.ts.
+      if (actionRecord?.type === "world_resupply") {
+        const verdict = validatePaidWorldResupply(game.state);
+        if (!verdict.ok) return this.error(connId, verdict.error);
+        game.state = applyPaidWorldResupply(game.state);
+        await this.save(game, conns);
+        return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
+      }
+
       const verdict = logic.validateAction(game.state, playerId, msg.action);
       if (!verdict.ok) return this.error(connId, verdict.error ?? "invalid action");
       game.state = logic.applyAction(game.state, playerId, msg.action);
@@ -363,12 +311,11 @@ export class Room extends DurableObject<Env> {
       };
     }
 
-    // msg.type === "reset"
     if (!(game.seats.includes(playerId) && game.claims?.[playerId] === connId)) {
       return this.error(connId, "spectators cannot reset");
     }
     const enough = game.seats.length >= META.minPlayers;
-    game.state = enough ? logic.setup(game.seats) : null;
+    game.state = enough ? stepWorldEconomy(logic.setup(game.seats)) : null;
     game.status = enough ? "playing" : "waiting";
     game.result = null;
     game.campaignBattle = null;
@@ -376,18 +323,10 @@ export class Room extends DurableObject<Env> {
     return { out: this.broadcast(game, conns), wakeIn: enough ? TICK_MS : null };
   }
 
-  /**
-   * Real-time loop: every TICK_MS, advance the simulation one step and fan out.
-   * Keeps ticking while playing; a finished game stops the alarm. Pause is a
-   * no-op in tick() but the loop stays alive so state keeps flowing.
-   */
   private async onWake(): Promise<Dispatchable> {
     const { game, conns } = await this.load();
     if (game.status !== "playing" || !game.state) return { wakeIn: null };
 
-    // Solo game with nobody watching: pause the sim so the keep cannot fall
-    // while the player is away. A join resumes it (see onMessage). A spectator
-    // alone does NOT keep the sim alive — only the seated player counts.
     if (game.seats[0] && !Object.values(conns).includes(game.seats[0])) {
       game.state = logic.applyAction(game.state, (game.state as any).seat, {
         type: "pause",
@@ -397,13 +336,8 @@ export class Room extends DurableObject<Env> {
       return { out: [], wakeIn: null };
     }
 
-    // Manually paused: tick() is a no-op, so stop waking and stop fanning
-    // out identical state. The action that unpauses re-arms the alarm.
     if ((game.state as any).paused) return { out: [], wakeIn: null };
 
-    // During a campaign encounter the siege/world simulation is frozen. A player
-    // can submit an explicit field order; otherwise this default advance keeps
-    // the battle moving and prevents a headless/older client from deadlocking.
     if (game.campaignBattle?.status === "active") {
       const battle = game.campaignBattle;
       const nextBattle = stepCampaignBattle(
@@ -423,22 +357,19 @@ export class Room extends DurableObject<Env> {
       return { out: this.broadcast(game, conns), wakeIn: TICK_MS };
     }
 
-    // The resolved snapshot is shown for one broadcast/tick, then normal
-    // campaign simulation resumes.
     if (game.campaignBattle?.status === "resolved") {
       game.campaignBattle = null;
     }
 
-    game.state = logic.tick(game.state);
+    // The base deterministic game advances first. Kingdom taxes are then
+    // derived from the resulting world day and recorded exactly once.
+    game.state = stepWorldEconomy(logic.tick(game.state));
     const end = logic.isGameOver(game.state);
     if (end.over) {
       game.status = "over";
       game.result = end;
     }
 
-    // Only start an overworld encounter if the base game is still live. The
-    // encounter freezes both armies' current paths before constructing battle
-    // state, ensuring repeated alarms cannot create duplicate encounters.
     if (game.status === "playing") {
       const state = game.state as any;
       const encounter = detectWorldEncounter(state.world);
@@ -456,17 +387,9 @@ export class Room extends DurableObject<Env> {
     }
 
     await this.save(game, conns);
-    // A finished game stops the loop; a live one keeps ticking.
     return { out: this.broadcast(game, conns), wakeIn: game.status === "playing" ? TICK_MS : null };
   }
 
-  // ── fan-out ────────────────────────────────────────────────────────────
-
-  /**
-   * Send a handler's messages to their target sockets and apply any `wakeIn`.
-   * Sockets are matched by the connId on their attachment, because after
-   * hibernation `ctx.getWebSockets()` is the only handle we have on them.
-   */
   private async dispatch(res: Dispatchable): Promise<void> {
     if (!res) return;
     const msgs = Array.isArray(res) ? res : (res.out ?? []);
@@ -498,7 +421,6 @@ export class Room extends DurableObject<Env> {
       }
     }
 
-    // null cancels a pending tick; a number (re)schedules one.
     if (wakeIn === null) await this.ctx.storage.deleteAlarm();
     else if (typeof wakeIn === "number") await this.ctx.storage.setAlarm(Date.now() + wakeIn);
   }
