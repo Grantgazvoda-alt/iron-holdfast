@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { CAMPAIGN_SAVE_VERSION } from "../src/campaign-save";
 import { freshGame } from "../src/room";
 
 describe("fresh room state", () => {
@@ -33,13 +34,18 @@ describe("fresh room state", () => {
     expect(a.seats).not.toBe(b.seats);
   });
 
-  it("starts empty and waiting", () => {
+  it("starts empty and waiting with current campaign defaults", () => {
     const g = freshGame();
     expect(g).toEqual({
+      saveVersion: CAMPAIGN_SAVE_VERSION,
       status: "waiting",
       seats: [],
       state: null,
       result: null,
+      campaignBattle: null,
+      commander: null,
+      lastRewardedBattleId: null,
+      difficulty: "standard",
       claims: {},
     });
   });
