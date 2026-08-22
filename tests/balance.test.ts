@@ -342,3 +342,96 @@ describe("world economy · tax & paid resupply (deterministic)", () => {
     expect(r.ok).toBe(false);
   });
 });
+
+// ── world-terrain + conquest + progression balance regressions ─────────────
+
+describe("world terrain · deterministic tactic contract", () => {
+  it("terrain codes map to expected march ticks & supply weights", async () => {
+    const { WORLD_TERRAIN, terrainRouteCost, terrainTacticalProfile } = await import("../src/world-terrain.js");
+    expect(terrainRouteCost(0)).toBe(1); // open ground
+    expect(terrainRouteCost(1)).toBe(2); // forest
+    expect(terrainRouteCost(2)).toBe(2); // hill
+    expect(terrainRouteCost(4)).toBe(1.5); // river
+    expect(terrainTacticalProfile(3).marchTicks).toBe(Infinity); // mountain impassable
+    expect(WORLD_TERRAIN[1].defender).toBeGreaterThan(WORLD_TERRAIN[1].attacker); // forest favors defender
+    expect(WORLD_TERRAIN[2].defender).toBeGreaterThan(WORLD_TERRAIN[1].defender); // hill > forest defense
+  });
+
+  it("routeSupplyWeight sums terrain weights deterministically; rejects OOB/Infinity", async () => {
+    const wt = await import("../src/world-terrain.js");
+    const world = { W: 4, H: 4, cells: new Array(16).fill(0) };
+    world.cells[0] = 1; // forest at (0,0)
+    world.cells[5] = 2; // hill at (1,1)
+    expect(wt.routeSupplyWeight(world, [[0, 0]])).toBe(2);
+    expect(wt.routeSupplyWeight(world, [[0, 0], [1, 1], [2, 2]])).toBe(2 + 2 + 1);
+    expect(wt.routeSupplyWeight(world, [[9, 9]])).toBe(Infinity); // OOB
+    expect(wt.routeSupplyWeight(world, [[1, 1], [3, 3]])).toBe(2 + 1); // mountain (?) guard
+  });
+});
+
+describe("world conquest · town assault is deterministic & costs troops", () => {
+  const base = () => ({
+    world: {
+      W: 4,
+      H: 4,
+      cells: new Array(16).fill(0),
+      day: 1,
+      army: { x: 1, y: 1, troops: 20, supply: 100, path: null, wait: 0 },
+      towns: [{ i: 0, name: "Enemyhold", x: 1, y: 1, faction: 1, troops: 8 }],
+      lords: [],
+    },
+    res: { gold: 0 },
+  });
+
+  it("validate rejects assault when no hostile settlement at army tile", async () => {
+    const c = await import("../src/world-conquest.ts");
+    const s = base();
+    s.world.towns = [{ i: 0, name: "Allytown", x: 2, y: 2, faction: 0, troops: 5 }];
+    const r = c.validateTownAssault(s);
+    expect(r.ok).toBe(false);
+  });
+
+  it("applyTownAssault resolves deterministically and flips enemy town when defenders hit 0", async () => {
+    const c = await import("../src/world-conquest.ts");
+    const s = base();
+    const { state, assault } = c.applyTownAssault(s);
+    expect(assault).toBeTruthy();
+    expect(Number.isFinite(assault.attackerLosses)).toBe(true);
+    expect(Number.isFinite(assault.defenderLosses)).toBe(true);
+    expect(assault.captured).toBe(assault.defenderRemaining <= 0 && assault.attackerRemaining > 0);
+    expect(Number.isNaN(assault.attackerRemaining)).toBe(false);
+  });
+
+  it("repeated identical assaults give identical results", async () => {
+    const c = await import("../src/world-conquest.ts");
+    const a = c.applyTownAssault(base());
+    const b = c.applyTownAssault(base());
+    expect(a).toEqual(b);
+  });
+});
+
+describe("campaign progression · reward difficulty is non-degenerate", () => {
+  it("campaignBattleDifficulty clamps to [0.5, 2]", async () => {
+    const p = await import("../src/campaign-progression.ts");
+    // ratio = enemyStart / playerStart
+    expect(p.campaignBattleDifficulty({ player: { troops: 1, casualties: 0 }, enemy: { troops: 500, casualties: 0 } })).toBe(2);
+    expect(p.campaignBattleDifficulty({ player: { troops: 500, casualties: 0 }, enemy: { troops: 1, casualties: 0 } })).toBe(0.5);
+  });
+
+  it("unresolved battles grant zero xp/renown", async () => {
+    const p = await import("../src/campaign-progression.ts");
+    const r = p.rewardCampaignBattle(null, { status: "active", player: { troops: 10, casualties: 2 }, enemy: { troops: 10, casualties: 2 } });
+    expect(r.earnedXp).toBe(0);
+    expect(r.earnedRenown).toBe(0);
+  });
+
+  it("commander path lockout enforced (cannot switch after choosing)", async () => {
+    const p = await import("../src/campaign-progression.ts");
+    const pr = await import("../src/progression.js");
+    const prof = pr.freshProfile("commander");
+    const a = p.applyCommanderAction(prof, { type: "commander_choose_path", path: "warden" });
+    expect(a.ok).toBe(true);
+    const b = p.applyCommanderAction(a.profile, { type: "commander_choose_path", path: "marshal" });
+    expect(b.ok).toBe(false);
+  });
+});
