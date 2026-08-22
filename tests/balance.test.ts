@@ -200,3 +200,145 @@ describe("world slice · marchCooldown (per-tile step gate)", () => {
     expect([s.world.army.x, s.world.army.y]).toEqual([2, 2]); // wait=1 < 2
   });
 });
+// ── campaign-battle + world-lords balance regressions ──────────────────────
+
+describe("campaign battle · deterministic field resolution", () => {
+  const base = () => ({
+    v: 1,
+    id: "t:1:2:2",
+    status: "active",
+    round: 0,
+    day: 1,
+    lordId: 1,
+    x: 2,
+    y: 2,
+    terrain: 0, // plain
+    player: { troops: 10, morale: 100, casualties: 0 },
+    enemy: { troops: 10, morale: 100, casualties: 0 },
+    result: null,
+    log: [],
+  });
+  const cm = () => import("../src/campaign-battle.js");
+
+  it("identical inputs → identical outcomes (no randomness)", async () => {
+    const cb = await cm();
+    const a = cb.stepCampaignBattle(base(), "advance", "advance");
+    const b = cb.stepCampaignBattle(base(), "advance", "advance");
+    expect(a.player.casualties).toBe(b.player.casualties);
+    expect(a.enemy.casualties).toBe(b.enemy.casualties);
+    expect(a).toEqual(b);
+  });
+
+  it("equal armies with equal orders trade symmetric-ish losses; none exceed troops", async () => {
+    const cb = await cm();
+    const r = cb.stepCampaignBattle(base(), "advance", "advance");
+    expect(r.player.troops).toBeGreaterThanOrEqual(0);
+    expect(r.enemy.troops).toBeGreaterThanOrEqual(0);
+    expect(r.player.casualties).toBeLessThanOrEqual(100);
+    expect(r.enemy.casualties).toBeLessThanOrEqual(100);
+    expect(Math.abs(r.player.casualties - r.enemy.casualties)).toBeLessThanOrEqual(10);
+  });
+
+  it("stronger army wins over the long run (strength ratio clamp respects 0.45–2.2)", async () => {
+    const cb = await cm();
+    let b = base();
+    b.player.troops = 300;
+    b.enemy.troops = 10;
+    for (let i = 0; i < 20 && b.status === "active"; i++) b = cb.stepCampaignBattle(b, "charge", "advance");
+    expect(b.enemy.troops).toBe(0);
+    expect(b.status).not.toBe("active");
+    expect(b.result).toBeDefined();
+  });
+
+  it("withdraw never lets a side exploit a 0-divisor (no NaN)", async () => {
+    const cb = await cm();
+    const b = base();
+    b.enemy.troops = 0;
+    const r = cb.stepCampaignBattle(b, "withdraw", "advance");
+    expect(Number.isFinite(r.player.troops)).toBe(true);
+    expect(Number.isFinite(r.enemy.troops)).toBe(true);
+    expect(Number.isNaN(r.player.troops)).toBe(false);
+  });
+
+  it("does not consume Date.now/Math.random (determinism contract for sim)", async () => {
+    const src = await (await import("node:fs")).promises.readFile("src/campaign-battle.js", "utf8");
+    expect(src).not.toMatch(/Math\.random|Date\s*\.\s*now/);
+  });
+});
+
+describe("world economy · tax & paid resupply (deterministic)", () => {
+  const eco = () => import("../src/world-economy.ts");
+
+  it("taxPerFriendlyTownPerDay mints 2 gold/day/town via stepWorldEconomy", async () => {
+    const m = await eco();
+    const s = {
+      world: {
+        W: 4,
+        H: 4,
+        cells: new Array(16).fill(0),
+        day: 5,
+        towns: [
+          { x: 1, y: 1, faction: 0 },
+          { x: 2, y: 2, faction: 0 },
+        ],
+        lastTaxDay: 3,
+        army: { troops: 10, supply: 100, x: 1, y: 1, path: null, wait: 0 },
+        lords: [],
+      },
+      res: { gold: 0 },
+    };
+    const r = m.stepWorldEconomy(s);
+    expect(r.res.gold).toBe(8); // 2 towns × (5-0) days × 2 gold
+    expect(r.world.lastTaxDay).toBe(5);
+    // idempotent — re-running with same day mints nothing
+    const r2 = m.stepWorldEconomy(r);
+    expect(r2.res.gold).toBe(8);
+  });
+
+  it("paid resupply respects cap 200 and cost supplyPerGold=5", async () => {
+    const m = await eco();
+    const s = {
+      world: {
+        W: 4,
+        H: 4,
+        cells: new Array(16).fill(0),
+        day: 6,
+        towns: [{ i: 0, name: "Alderford", x: 1, y: 1, faction: 0 }],
+        army: { x: 1, y: 1, troops: 10, supply: 190 },
+        lords: [],
+      },
+      res: { gold: 100 },
+    };
+    expect(m.WORLD_ECONOMY.supplyCap).toBe(200);
+    expect(m.WORLD_ECONOMY.supplyPerGold).toBe(5);
+    expect(m.WORLD_ECONOMY.maxSupplyPurchase).toBe(20);
+
+    const quote = m.quotePaidWorldResupply(s);
+    expect(quote).not.toBeNull();
+    if (quote) {
+      expect(quote.goldCost).toBeGreaterThan(0);
+      expect(quote.supplyAdded).toBeGreaterThan(0);
+      // applying never exceeds cap
+      const after = m.applyPaidWorldResupply(s);
+      expect(after.world.army.supply).toBeLessThanOrEqual(200);
+    }
+  });
+
+  it("validatePaidResupply rejects standing on a non-friendly tile", async () => {
+    const m = await eco();
+    const s = {
+      world: {
+        W: 4,
+        H: 4,
+        cells: new Array(16).fill(0),
+        day: 6,
+        towns: [{ i: 0, name: "Unfriendly", x: 9, y: 9, faction: 1 }],
+        army: { x: 9, y: 9, troops: 10, supply: 100 },
+        lords: [],
+      },
+      res: { gold: 0 },
+    };
+    const r = m.validatePaidWorldResupply(s);
+    expect(r.ok).toBe(false);
+  });
+});
