@@ -38,8 +38,8 @@ jobs:
       - name: Validate deterministic game contract
         run: node scripts/check-logic.mjs
 
-      - name: Strict TypeScript
-        run: npx tsc --noEmit
+      - name: Strict production TypeScript
+        run: npx tsc --noEmit -p tsconfig.ci.json
 
       - name: Run Cloudflare/Vitest suites
         run: npx vitest run --exclude tests/balance.test.ts
