@@ -1,0 +1,55 @@
+name: Campaign CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: campaign-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  campaign:
+    name: Full campaign certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --no-save
+
+      - name: Validate deterministic game contract
+        run: bun run check:logic
+
+      - name: Strict TypeScript
+        run: bun run typecheck
+
+      - name: Run full test suite
+        run: bun run test
+
+      - name: Build production bundle
+        run: bun run build
+
+      - name: Validate campaign/mobile browser scripts
+        run: |
+          node --check public/client.js
+          node --check public/battle.js
+          node --check public/session.js
+          node --check public/campaign-ui.js
+
+      - name: Run dependency-free release regressions
+        run: >-
+          node --test
+          tests/release-certification.test.mjs
+          tests/release-regressions.test.mjs
+          tests/protocol-certification.mjs
+          tests/session-certification.test.mjs
